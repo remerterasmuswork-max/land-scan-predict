@@ -18,8 +18,14 @@ verify_jwt = false
 [functions.parcel-search]
 verify_jwt = false
 
+[functions.refresh-views]
+verify_jwt = false
+
 [functions.score-county]
 verify_jwt = false
 
 [functions.top-parcels]
+verify_jwt = false
+
+[functions.vector-tiles]
 verify_jwt = false
