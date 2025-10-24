@@ -76,6 +76,9 @@ serve(async (req) => {
     return new Response(null, { headers: corsHeaders });
   }
 
+  const startTime = Date.now();
+  const MAX_EXECUTION_TIME = 55000; // 55 seconds (leave 5s buffer)
+
   try {
     const supabaseClient = createClient(
       Deno.env.get("SUPABASE_URL") ?? "",
@@ -88,64 +91,182 @@ serve(async (req) => {
       throw new Error(`County ${county} not supported`);
     }
 
-    const jobId = crypto.randomUUID();
-    const startTime = new Date().toISOString();
-    
-    console.log(`Starting ingestion for ${county}, job ${jobId}`);
-
-    // Create ingestion job record
-    await supabaseClient.from("ingestion_jobs").insert({
-      id: jobId,
-      county: county.toLowerCase(),
-      status: "in_progress",
-      started_at: startTime,
-    });
-
     const config = FIELD_MAPS[county.toLowerCase()];
-    
+    const countyLower = county.toLowerCase();
+
+    // Check for existing job
+    const { data: existingJobs } = await supabaseClient
+      .from("ingestion_jobs")
+      .select("*")
+      .eq("county", countyLower)
+      .eq("is_complete", false)
+      .order("started_at", { ascending: false })
+      .limit(1);
+
+    let jobId: string;
+    let cursor: number;
+
+    if (existingJobs && existingJobs.length > 0) {
+      // Resume existing job
+      jobId = existingJobs[0].id;
+      cursor = existingJobs[0].last_objectid || 0;
+      console.log(`Resuming job ${jobId} from OBJECTID ${cursor}`);
+      
+      await supabaseClient.from("ingestion_jobs").update({
+        status: "in_progress",
+      }).eq("id", jobId);
+    } else {
+      // Create new job
+      jobId = crypto.randomUUID();
+      cursor = 0;
+      console.log(`Starting new ingestion job ${jobId} for ${county}`);
+      
+      await supabaseClient.from("ingestion_jobs").insert({
+        id: jobId,
+        county: countyLower,
+        status: "in_progress",
+        started_at: new Date().toISOString(),
+        last_objectid: 0,
+        is_complete: false,
+      });
+    }
+
     let processed = 0;
     let withGeometry = 0;
     let failed = 0;
-    let offset = 0;
     const batchSize = 2000;
     const rpcBatchSize = 500;
-    const nullAudit: Record<string, number> = {};
 
-    console.log(`Starting ingestion for ${county} from ${config.url}`);
-
-    while (true) {
-      const url = `${config.url}/query?where=${config.where || "1=1"}&outFields=*&returnGeometry=true&outSR=4326&f=geojson&resultOffset=${offset}&resultRecordCount=${batchSize}`;
+    while ((Date.now() - startTime) < MAX_EXECUTION_TIME) {
+      const whereClause = config.where 
+        ? `(${config.where}) AND OBJECTID > ${cursor}`
+        : `OBJECTID > ${cursor}`;
       
-      console.log(`Fetching batch at offset ${offset}, URL: ${url}`);
+      const url = `${config.url}/query?where=${encodeURIComponent(whereClause)}&orderByFields=OBJECTID ASC&outFields=*&returnGeometry=true&outSR=4326&f=geojson&resultRecordCount=${batchSize}`;
+      
+      console.log(`Fetching batch from OBJECTID ${cursor}, URL: ${url}`);
       const response = await fetch(url);
       
       if (!response.ok) {
         const errorText = await response.text();
         console.error(`HTTP ${response.status} from ${url}`);
-        console.error(`Response body: ${errorText}`);
-        throw new Error(`HTTP ${response.status}: ${errorText}`);
+        console.error(`Response body (first 300 chars): ${errorText.substring(0, 300)}`);
+        throw new Error(`HTTP ${response.status}: ${errorText.substring(0, 300)}`);
       }
       
       const data = await response.json();
 
       if (!data.features || data.features.length === 0) {
-        console.log(`No more features at offset ${offset}, stopping`);
-        break;
+        console.log(`No more features after OBJECTID ${cursor}, marking complete`);
+        
+        // Mark job complete
+        await supabaseClient.from("ingestion_jobs").update({
+          status: "completed",
+          completed_at: new Date().toISOString(),
+          is_complete: true,
+          records_processed: processed,
+          records_failed: failed,
+          records_with_geometry: withGeometry,
+        }).eq("id", jobId);
+
+        // Update county status
+        await supabaseClient.from("counties").upsert({
+          name: countyLower,
+          status: "completed",
+          last_ingestion_date: new Date().toISOString(),
+        }, {
+          onConflict: "name",
+        });
+
+        // Query final results using direct queries
+        const { data: parcelsData, error: parcelsError } = await supabaseClient
+          .from("parcels")
+          .select("id, geometry", { count: "exact" })
+          .eq("county", countyLower);
+
+        const wakeRows = parcelsData?.length || 0;
+        const withGeomCount = parcelsData?.filter(p => p.geometry !== null).length || 0;
+        const pctGeom = wakeRows > 0 ? Math.round((withGeomCount / wakeRows) * 100 * 100) / 100 : 0;
+
+        if (parcelsError) {
+          console.error("Error querying parcels:", parcelsError);
+        }
+
+        const { count: histRows, error: histError } = await supabaseClient
+          .from("parcel_history")
+          .select("*", { count: "exact", head: true })
+          .eq("ts", new Date().toISOString().split('T')[0])
+          .in("parcel_id", parcelsData?.map(p => p.id) || []);
+
+        if (histError) {
+          console.error("Error querying history:", histError);
+        }
+
+        const { data: sampleData, error: sampleError } = await supabaseClient
+          .from("parcels")
+          .select("pin, land_val, type_and_use_code, deed_date")
+          .eq("county", countyLower)
+          .not("geometry", "is", null)
+          .limit(3);
+
+        if (sampleError) {
+          console.error("Error querying samples:", sampleError);
+        }
+
+        console.log("=== FINAL RESULTS ===");
+        console.log(`wake_rows: ${wakeRows}`);
+        console.log(`pct_geom: ${pctGeom}`);
+        console.log(`hist_rows: ${histRows || 0}`);
+        console.log("Sample rows:", JSON.stringify(sampleData, null, 2));
+
+        // Hard acceptance check
+        if (wakeRows < 100000 || pctGeom < 99.0 || (histRows || 0) < 100000) {
+          return new Response(
+            JSON.stringify({
+              status: "FAIL",
+              reason: "Acceptance criteria not met",
+              wake_rows: wakeRows,
+              pct_geom: pctGeom,
+              hist_rows: histRows || 0,
+              requirements: { wake_rows: ">=100000", pct_geom: ">=99.0", hist_rows: ">=100000" },
+            }),
+            {
+              headers: { ...corsHeaders, "Content-Type": "application/json" },
+              status: 500,
+            }
+          );
+        }
+
+        return new Response(
+          JSON.stringify({
+            status: "COMPLETE",
+            county,
+            wake_rows: wakeRows,
+            pct_geom: pctGeom,
+            hist_rows: histRows || 0,
+            sample_rows: sampleData,
+          }),
+          {
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+            status: 200,
+          }
+        );
       }
 
       console.log(`Received ${data.features.length} features`);
 
-      // Debug: log first feature for field inspection
-      if (offset === 0 && data.features.length > 0) {
-        console.log("FIRST FEATURE SAMPLE:", JSON.stringify(data.features[0], null, 2));
-      }
-
       // Build batch payload for bulk RPC
       const payloadBatch: any[] = [];
+      let maxObjectId = cursor;
 
       for (const feature of data.features) {
         const attrs = feature.properties;
         const geom = feature.geometry;
+        const objectId = attrs.OBJECTID || attrs.objectid || attrs.ObjectId;
+
+        if (objectId && objectId > maxObjectId) {
+          maxObjectId = objectId;
+        }
 
         // Skip if missing PIN
         if (!attrs[config.pin]) {
@@ -165,7 +286,7 @@ serve(async (req) => {
 
         const parcelPayload: any = {
           pin: attrs[config.pin],
-          county: county.toLowerCase(),
+          county: countyLower,
           geometry: geom,
           address: attrs[config.address] || null,
           city: attrs[config.city] || null,
@@ -185,23 +306,12 @@ serve(async (req) => {
           owner_mailing_1: attrs[config.owner_mailing_1] || null,
         };
 
-        // Track nulls
-        for (const [key, value] of Object.entries(parcelPayload)) {
-          if (value === null && key !== 'calc_area_acres' && key !== 'geometry') {
-            nullAudit[key] = (nullAudit[key] || 0) + 1;
-          }
-        }
-
         payloadBatch.push(parcelPayload);
       }
 
       // Send in chunks to bulk RPC
       for (let i = 0; i < payloadBatch.length; i += rpcBatchSize) {
         const chunk = payloadBatch.slice(i, i + rpcBatchSize);
-        
-        if (i === 0 && offset === 0) {
-          console.log("FIRST RPC PAYLOAD SAMPLE:", JSON.stringify(chunk[0], null, 2));
-        }
 
         try {
           const { data: insertedCount, error } = await supabaseClient.rpc("bulk_insert_parcels_with_geojson", {
@@ -209,7 +319,7 @@ serve(async (req) => {
           });
 
           if (error) {
-            console.error(`RPC error for chunk at offset ${offset}:`, error);
+            console.error(`RPC error:`, error);
             failed += chunk.length;
           } else {
             console.log(`Inserted ${insertedCount} parcels via RPC`);
@@ -221,65 +331,42 @@ serve(async (req) => {
       }
 
       processed += data.features.length;
-      offset += batchSize;
+      cursor = maxObjectId;
 
-      console.log(`Processed ${processed} total, ${withGeometry} with geometry, ${failed} failed`);
+      console.log(`Processed ${processed} in this run, cursor now at OBJECTID ${cursor}, ${withGeometry} with geometry, ${failed} failed`);
 
-      // Add delay between batches to avoid CPU limits
-      await new Promise(resolve => setTimeout(resolve, 200));
+      // Update job progress
+      await supabaseClient.from("ingestion_jobs").update({
+        last_objectid: cursor,
+        records_processed: processed,
+        records_failed: failed,
+        records_with_geometry: withGeometry,
+      }).eq("id", jobId);
 
-      // Safety break
-      if (offset > 500000) {
-        console.log("Safety break at 500k offset");
-        break;
-      }
+      // Short delay
+      await new Promise(resolve => setTimeout(resolve, 100));
     }
 
-    // Calculate median land value
-    const { data: medianData } = await supabaseClient
-      .from("parcels")
-      .select("land_val")
-      .eq("county", county.toLowerCase())
-      .not("land_val", "is", null)
-      .order("land_val", { ascending: true })
-      .limit(1)
-      .range(Math.floor(processed / 2), Math.floor(processed / 2));
-
-    const medianLandVal = medianData && medianData.length > 0 ? medianData[0].land_val : null;
-
-    // Update ingestion job
+    // Time limit reached, persist progress and exit
+    console.log(`Time limit reached. Processed ${processed} parcels this run, cursor at OBJECTID ${cursor}`);
+    
     await supabaseClient.from("ingestion_jobs").update({
-      status: "completed",
-      completed_at: new Date().toISOString(),
+      status: "in_progress",
+      last_objectid: cursor,
       records_processed: processed,
       records_failed: failed,
       records_with_geometry: withGeometry,
-      median_land_val: medianLandVal,
-      null_audit: nullAudit,
     }).eq("id", jobId);
-
-    // Update county status
-    await supabaseClient.from("counties").upsert({
-      name: county.toLowerCase(),
-      status: "completed",
-      total_parcels: processed,
-      last_ingestion_date: new Date().toISOString(),
-    }, {
-      onConflict: "name",
-    });
-
-    console.log(`Ingestion complete: ${processed} parcels, ${withGeometry} with geometry, ${failed} failed`);
 
     return new Response(
       JSON.stringify({
-        success: true,
+        status: "PROGRESS",
         county,
         processed,
-        withGeometry,
+        last_objectid: cursor,
+        with_geometry: withGeometry,
         failed,
-        medianLandVal,
-        nullAudit,
-        geometryRate: withGeometry / processed,
+        message: `Processed ${processed} parcels. Resume to continue from OBJECTID ${cursor}.`,
       }),
       {
         headers: { ...corsHeaders, "Content-Type": "application/json" },

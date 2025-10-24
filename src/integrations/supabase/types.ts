@@ -97,6 +97,8 @@ export type Database = {
           created_by: string | null
           error_message: string | null
           id: string
+          is_complete: boolean | null
+          last_objectid: number | null
           median_land_val: number | null
           null_audit: Json | null
           records_failed: number | null
@@ -112,6 +114,8 @@ export type Database = {
           created_by?: string | null
           error_message?: string | null
           id?: string
+          is_complete?: boolean | null
+          last_objectid?: number | null
           median_land_val?: number | null
           null_audit?: Json | null
           records_failed?: number | null
@@ -127,6 +131,8 @@ export type Database = {
           created_by?: string | null
           error_message?: string | null
           id?: string
+          is_complete?: boolean | null
+          last_objectid?: number | null
           median_land_val?: number | null
           null_audit?: Json | null
           records_failed?: number | null
