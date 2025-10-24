@@ -937,6 +937,15 @@ export type Database = {
         Returns: boolean
       }
       geomfromewkt: { Args: { "": string }; Returns: unknown }
+      get_tile_data: {
+        Args: {
+          where_clause?: string
+          x_param: number
+          y_param: number
+          z_param: number
+        }
+        Returns: string
+      }
       gettransactionid: { Args: never; Returns: unknown }
       longtransactionsenabled: { Args: never; Returns: boolean }
       populate_geometry_columns:
