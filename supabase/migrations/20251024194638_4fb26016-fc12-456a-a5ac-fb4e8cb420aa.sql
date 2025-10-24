@@ -1,0 +1,22 @@
+-- Fix search path for security (with CASCADE)
+DROP FUNCTION IF EXISTS public.update_updated_at_column() CASCADE;
+
+CREATE OR REPLACE FUNCTION public.update_updated_at_column()
+RETURNS TRIGGER 
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+BEGIN
+  NEW.updated_at = now();
+  RETURN NEW;
+END;
+$$;
+
+-- Recreate the triggers
+CREATE TRIGGER update_counties_updated_at BEFORE UPDATE ON public.counties
+  FOR EACH ROW EXECUTE FUNCTION public.update_updated_at_column();
+CREATE TRIGGER update_parcels_updated_at BEFORE UPDATE ON public.parcels
+  FOR EACH ROW EXECUTE FUNCTION public.update_updated_at_column();
+CREATE TRIGGER update_parcel_scores_updated_at BEFORE UPDATE ON public.parcel_scores
+  FOR EACH ROW EXECUTE FUNCTION public.update_updated_at_column();
