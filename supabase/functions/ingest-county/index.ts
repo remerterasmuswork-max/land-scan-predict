@@ -9,17 +9,23 @@ const corsHeaders = {
 // Field mappings for each county's Esri REST API
 const FIELD_MAPS: Record<string, any> = {
   wake: {
-    url: "https://services.wakegov.com/arcgis/rest/services/RealEstate/Parcels/FeatureServer/0",
+    url: "https://maps.wakegov.com/arcgis/rest/services/Property/Parcels/MapServer/0",
     pin: "PIN_NUM",
     address: "SITE_ADDRESS",
     land_val: "LAND_VAL",
     bldg_val: "BLDG_VAL",
     total_value_assd: "TOTAL_VALUE_ASSD",
     type_and_use_code: "TYPE_AND_USE",
+    type_use_decode: "TYPE_USE_DECODE",
+    land_code: "LAND_CODE",
+    billing_class_decode: "BILLING_CLASS_DECODE",
     deed_date: "DEED_DATE",
     sale_date: "SALE_DATE",
     totsalprice: "TOTSALPRICE",
     owner_name: "OWNER",
+    owner_mailing_1: "ADDR1",
+    city: "CITY_DECODE",
+    zip_code: "ZIPNUM",
     acreage: "REID_ACREAG",
   },
   mecklenburg: {
@@ -106,10 +112,18 @@ serve(async (req) => {
     const historyRecords: any[] = [];
 
     while (true) {
-      const url = `${config.url}/query?where=${config.where || "1=1"}&outFields=*&returnGeometry=true&f=json&resultOffset=${offset}&resultRecordCount=${batchSize}`;
+      const url = `${config.url}/query?where=${config.where || "1=1"}&outFields=*&returnGeometry=true&outSR=4326&f=json&resultOffset=${offset}&resultRecordCount=${batchSize}`;
       
       console.log(`Fetching batch at offset ${offset}`);
       const response = await fetch(url);
+      
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error(`HTTP ${response.status} from ${url}`);
+        console.error(`Response body: ${errorText}`);
+        throw new Error(`HTTP ${response.status}: ${errorText}`);
+      }
+      
       const data = await response.json();
 
       if (!data.features || data.features.length === 0) {
@@ -129,10 +143,16 @@ serve(async (req) => {
           bldg_val: attrs[config.bldg_val] || null,
           total_value_assd: attrs[config.total_value_assd] || null,
           type_and_use_code: attrs[config.type_and_use_code] || null,
+          type_use_decode: attrs[config.type_use_decode] || null,
+          land_code: attrs[config.land_code] || null,
+          billing_class_decode: attrs[config.billing_class_decode] || null,
           deed_date: attrs[config.deed_date] ? new Date(attrs[config.deed_date]).toISOString().split('T')[0] : null,
           sale_date: attrs[config.sale_date] ? new Date(attrs[config.sale_date]).toISOString().split('T')[0] : null,
           totsalprice: attrs[config.totsalprice] || null,
           owner_name: attrs[config.owner_name] || null,
+          owner_mailing_1: attrs[config.owner_mailing_1] || null,
+          city: attrs[config.city] || null,
+          zip_code: attrs[config.zip_code] || null,
           acreage: attrs[config.acreage] || null,
         };
 
