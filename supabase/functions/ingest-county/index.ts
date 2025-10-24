@@ -9,7 +9,7 @@ const corsHeaders = {
 // Field mappings for each county's Esri REST API
 const FIELD_MAPS: Record<string, any> = {
   wake: {
-    url: "https://maps.wakegov.com/arcgis/rest/services/Property/Parcels/MapServer/0",
+    url: "https://maps.wakegov.com/arcgis/rest/services/Property/Parcels/FeatureServer/0",
     pin: "PIN_NUM",
     address: "SITE_ADDRESS",
     land_val: "LAND_VAL",
@@ -107,12 +107,11 @@ serve(async (req) => {
     let withGeometry = 0;
     let failed = 0;
     let offset = 0;
-    const batchSize = 1000;
+    const batchSize = 2000;
     const nullAudit: Record<string, number> = {};
-    const historyRecords: any[] = [];
 
     while (true) {
-      const url = `${config.url}/query?where=${config.where || "1=1"}&outFields=*&returnGeometry=true&outSR=4326&f=json&resultOffset=${offset}&resultRecordCount=${batchSize}`;
+      const url = `${config.url}/query?where=${config.where || "1=1"}&outFields=*&returnGeometry=true&outSR=4326&f=geojson&resultOffset=${offset}&resultRecordCount=${batchSize}`;
       
       console.log(`Fetching batch at offset ${offset}`);
       const response = await fetch(url);
@@ -130,11 +129,21 @@ serve(async (req) => {
         break;
       }
 
-      const parcels = data.features.map((feature: any) => {
-        const attrs = feature.attributes;
+      // Process features
+      const parcelsToInsert: any[] = [];
+      const historyRecords: any[] = [];
+
+      for (const feature of data.features) {
+        const attrs = feature.properties;
         const geom = feature.geometry;
 
-        // Map fields
+        // Skip if missing PIN
+        if (!attrs[config.pin]) {
+          console.error("Missing PIN field:", attrs);
+          failed++;
+          continue;
+        }
+
         const parcel: any = {
           pin: attrs[config.pin],
           county: county.toLowerCase(),
@@ -163,89 +172,131 @@ serve(async (req) => {
           }
         }
 
-        // Convert geometry and calculate acreage
-        if (geom && (geom.rings || geom.x)) {
+        // Store GeoJSON geometry
+        if (geom && (geom.type === "Polygon" || geom.type === "MultiPolygon")) {
           withGeometry++;
-          parcel.geometry = JSON.stringify(geom);
-          
-          // Calculate centroid
-          if (geom.rings) {
-            const firstRing = geom.rings[0];
-            if (firstRing && firstRing.length > 0) {
-              const centerX = firstRing.reduce((sum: number, coord: number[]) => sum + coord[0], 0) / firstRing.length;
-              const centerY = firstRing.reduce((sum: number, coord: number[]) => sum + coord[1], 0) / firstRing.length;
-              parcel.centroid = `POINT(${centerX} ${centerY})`;
-              
-              // Calculate area in acres using Shoelace formula (approximate)
-              if (!parcel.acreage) {
-                let area = 0;
-                for (let i = 0; i < firstRing.length - 1; i++) {
-                  area += firstRing[i][0] * firstRing[i + 1][1] - firstRing[i + 1][0] * firstRing[i][1];
-                }
-                area = Math.abs(area) / 2;
-                // Convert from square feet to acres (assuming coordinates are in feet)
-                parcel.calc_area_acres = area / 43560;
-              }
+          parcel.geojson = JSON.stringify(geom);
+        }
+
+        parcelsToInsert.push(parcel);
+      }
+
+      // Batch upsert with PostGIS geometry conversion
+      const today = new Date().toISOString().split('T')[0];
+      
+      for (const parcel of parcelsToInsert) {
+        try {
+          if (parcel.geojson) {
+            // Use raw SQL via RPC to insert with geometry
+            const { data, error } = await supabaseClient.rpc("exec_raw_sql", {
+              sql: `
+                INSERT INTO parcels (
+                  pin, county, address, land_val, bldg_val, total_value_assd,
+                  type_and_use_code, type_use_decode, land_code, billing_class_decode,
+                  deed_date, sale_date, totsalprice, owner_name, owner_mailing_1,
+                  city, zip_code, acreage, geometry, centroid, calc_area_acres
+                ) VALUES (
+                  $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18,
+                  ST_SetSRID(ST_GeomFromGeoJSON($19), 4326),
+                  ST_Centroid(ST_SetSRID(ST_GeomFromGeoJSON($19), 4326)),
+                  ST_Area(ST_SetSRID(ST_GeomFromGeoJSON($19), 4326)::geography) / 4046.8564224
+                )
+                ON CONFLICT (pin, county) DO UPDATE SET
+                  address = EXCLUDED.address,
+                  land_val = EXCLUDED.land_val,
+                  bldg_val = EXCLUDED.bldg_val,
+                  total_value_assd = EXCLUDED.total_value_assd,
+                  type_and_use_code = EXCLUDED.type_and_use_code,
+                  type_use_decode = EXCLUDED.type_use_decode,
+                  land_code = EXCLUDED.land_code,
+                  billing_class_decode = EXCLUDED.billing_class_decode,
+                  deed_date = EXCLUDED.deed_date,
+                  sale_date = EXCLUDED.sale_date,
+                  totsalprice = EXCLUDED.totsalprice,
+                  owner_name = EXCLUDED.owner_name,
+                  owner_mailing_1 = EXCLUDED.owner_mailing_1,
+                  city = EXCLUDED.city,
+                  zip_code = EXCLUDED.zip_code,
+                  acreage = EXCLUDED.acreage,
+                  geometry = EXCLUDED.geometry,
+                  centroid = EXCLUDED.centroid,
+                  calc_area_acres = EXCLUDED.calc_area_acres
+                RETURNING id
+              `,
+              params: [
+                parcel.pin, parcel.county, parcel.address, parcel.land_val, parcel.bldg_val,
+                parcel.total_value_assd, parcel.type_and_use_code, parcel.type_use_decode,
+                parcel.land_code, parcel.billing_class_decode, parcel.deed_date, parcel.sale_date,
+                parcel.totsalprice, parcel.owner_name, parcel.owner_mailing_1, parcel.city,
+                parcel.zip_code, parcel.acreage, parcel.geojson
+              ]
+            });
+
+            if (error) {
+              console.error("Insert error:", error);
+              failed++;
+              continue;
             }
-          } else if (geom.x && geom.y) {
-            parcel.centroid = `POINT(${geom.x} ${geom.y})`;
+
+            // Add history record
+            historyRecords.push({
+              parcel_id: data[0].id,
+              ts: today,
+              land_value: parcel.land_val,
+              total_value_assd: parcel.total_value_assd,
+              type_and_use_code: parcel.type_and_use_code,
+              source: "ingest",
+            });
+          } else {
+            // Insert without geometry
+            const { data: inserted, error } = await supabaseClient
+              .from("parcels")
+              .upsert([parcel], {
+                onConflict: "pin,county",
+                ignoreDuplicates: false,
+              })
+              .select("id")
+              .single();
+
+            if (error) {
+              console.error("Insert error:", error);
+              failed++;
+              continue;
+            }
+
+            historyRecords.push({
+              parcel_id: inserted.id,
+              ts: today,
+              land_value: parcel.land_val,
+              total_value_assd: parcel.total_value_assd,
+              type_and_use_code: parcel.type_and_use_code,
+              source: "ingest",
+            });
           }
+        } catch (e) {
+          console.error("Parcel insert failed:", e);
+          failed++;
         }
+      }
 
-        return parcel;
-      });
-
-      // Upsert parcels
-      const { data: upsertedParcels, error: upsertError } = await supabaseClient
-        .from("parcels")
-        .upsert(parcels, {
-          onConflict: "pin,county",
-          ignoreDuplicates: false,
-        })
-        .select("id, pin, land_val, total_value_assd, type_and_use_code");
-
-      if (upsertError) {
-        console.error("Upsert error:", upsertError);
-        failed += parcels.length;
-      } else {
-        // Create history records for today's snapshot
-        const today = new Date().toISOString().split('T')[0];
-        for (const p of upsertedParcels || []) {
-          historyRecords.push({
-            parcel_id: p.id,
-            ts: today,
-            land_value: p.land_val,
-            total_value_assd: p.total_value_assd,
-            type_and_use_code: p.type_and_use_code,
-            source: "ingest",
-          });
-        }
-
-        // Batch insert history records
-        if (historyRecords.length >= 500) {
-          await supabaseClient.from("parcel_history").upsert(historyRecords, {
-            onConflict: "parcel_id,ts",
-            ignoreDuplicates: true,
-          });
-          historyRecords.length = 0;
-        }
+      // Batch insert history records
+      if (historyRecords.length > 0) {
+        await supabaseClient.from("parcel_history").upsert(historyRecords, {
+          onConflict: "parcel_id,ts",
+          ignoreDuplicates: true,
+        });
       }
 
       processed += data.features.length;
       offset += batchSize;
 
-      console.log(`Processed ${processed} parcels so far`);
+      console.log(`Processed ${processed} parcels, ${withGeometry} with geometry, ${failed} failed`);
+
+      // Add delay between batches to avoid CPU limits
+      await new Promise(resolve => setTimeout(resolve, 200));
 
       // Safety break
       if (offset > 500000) break;
-    }
-
-    // Insert remaining history records
-    if (historyRecords.length > 0) {
-      await supabaseClient.from("parcel_history").upsert(historyRecords, {
-        onConflict: "parcel_id,ts",
-        ignoreDuplicates: true,
-      });
     }
 
     // Calculate median land value
@@ -281,7 +332,7 @@ serve(async (req) => {
       onConflict: "name",
     });
 
-    console.log(`Ingestion complete for ${county}: ${processed} parcels, ${withGeometry} with geometry`);
+    console.log(`Ingestion complete: ${processed} parcels, ${withGeometry} with geometry, ${failed} failed`);
 
     return new Response(
       JSON.stringify({
@@ -289,6 +340,7 @@ serve(async (req) => {
         county,
         processed,
         withGeometry,
+        failed,
         medianLandVal,
         nullAudit,
         geometryRate: withGeometry / processed,
