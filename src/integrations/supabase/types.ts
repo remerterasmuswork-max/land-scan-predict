@@ -947,6 +947,30 @@ export type Database = {
         Returns: string
       }
       gettransactionid: { Args: never; Returns: unknown }
+      insert_parcel_with_geojson: {
+        Args: {
+          p_acreage?: number
+          p_address?: string
+          p_billing_class_decode?: string
+          p_bldg_val?: number
+          p_city?: string
+          p_county: Database["public"]["Enums"]["county_name"]
+          p_deed_date?: string
+          p_geojson: string
+          p_land_code?: string
+          p_land_val?: number
+          p_owner_mailing_1?: string
+          p_owner_name?: string
+          p_pin: string
+          p_sale_date?: string
+          p_total_value_assd?: number
+          p_totsalprice?: number
+          p_type_and_use_code?: number
+          p_type_use_decode?: string
+          p_zip_code?: string
+        }
+        Returns: string
+      }
       longtransactionsenabled: { Args: never; Returns: boolean }
       populate_geometry_columns:
         | { Args: { use_typmod?: boolean }; Returns: string }

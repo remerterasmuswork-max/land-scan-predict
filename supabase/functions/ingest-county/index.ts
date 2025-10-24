@@ -187,49 +187,27 @@ serve(async (req) => {
       for (const parcel of parcelsToInsert) {
         try {
           if (parcel.geojson) {
-            // Use raw SQL via RPC to insert with geometry
-            const { data, error } = await supabaseClient.rpc("exec_raw_sql", {
-              sql: `
-                INSERT INTO parcels (
-                  pin, county, address, land_val, bldg_val, total_value_assd,
-                  type_and_use_code, type_use_decode, land_code, billing_class_decode,
-                  deed_date, sale_date, totsalprice, owner_name, owner_mailing_1,
-                  city, zip_code, acreage, geometry, centroid, calc_area_acres
-                ) VALUES (
-                  $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18,
-                  ST_SetSRID(ST_GeomFromGeoJSON($19), 4326),
-                  ST_Centroid(ST_SetSRID(ST_GeomFromGeoJSON($19), 4326)),
-                  ST_Area(ST_SetSRID(ST_GeomFromGeoJSON($19), 4326)::geography) / 4046.8564224
-                )
-                ON CONFLICT (pin, county) DO UPDATE SET
-                  address = EXCLUDED.address,
-                  land_val = EXCLUDED.land_val,
-                  bldg_val = EXCLUDED.bldg_val,
-                  total_value_assd = EXCLUDED.total_value_assd,
-                  type_and_use_code = EXCLUDED.type_and_use_code,
-                  type_use_decode = EXCLUDED.type_use_decode,
-                  land_code = EXCLUDED.land_code,
-                  billing_class_decode = EXCLUDED.billing_class_decode,
-                  deed_date = EXCLUDED.deed_date,
-                  sale_date = EXCLUDED.sale_date,
-                  totsalprice = EXCLUDED.totsalprice,
-                  owner_name = EXCLUDED.owner_name,
-                  owner_mailing_1 = EXCLUDED.owner_mailing_1,
-                  city = EXCLUDED.city,
-                  zip_code = EXCLUDED.zip_code,
-                  acreage = EXCLUDED.acreage,
-                  geometry = EXCLUDED.geometry,
-                  centroid = EXCLUDED.centroid,
-                  calc_area_acres = EXCLUDED.calc_area_acres
-                RETURNING id
-              `,
-              params: [
-                parcel.pin, parcel.county, parcel.address, parcel.land_val, parcel.bldg_val,
-                parcel.total_value_assd, parcel.type_and_use_code, parcel.type_use_decode,
-                parcel.land_code, parcel.billing_class_decode, parcel.deed_date, parcel.sale_date,
-                parcel.totsalprice, parcel.owner_name, parcel.owner_mailing_1, parcel.city,
-                parcel.zip_code, parcel.acreage, parcel.geojson
-              ]
+            // Use database function to insert with geometry
+            const { data, error } = await supabaseClient.rpc("insert_parcel_with_geojson", {
+              p_pin: parcel.pin,
+              p_county: parcel.county,
+              p_geojson: parcel.geojson,
+              p_address: parcel.address,
+              p_land_val: parcel.land_val,
+              p_bldg_val: parcel.bldg_val,
+              p_total_value_assd: parcel.total_value_assd,
+              p_type_and_use_code: parcel.type_and_use_code,
+              p_type_use_decode: parcel.type_use_decode,
+              p_land_code: parcel.land_code,
+              p_billing_class_decode: parcel.billing_class_decode,
+              p_deed_date: parcel.deed_date,
+              p_sale_date: parcel.sale_date,
+              p_totsalprice: parcel.totsalprice,
+              p_owner_name: parcel.owner_name,
+              p_owner_mailing_1: parcel.owner_mailing_1,
+              p_city: parcel.city,
+              p_zip_code: parcel.zip_code,
+              p_acreage: parcel.acreage,
             });
 
             if (error) {
@@ -240,7 +218,7 @@ serve(async (req) => {
 
             // Add history record
             historyRecords.push({
-              parcel_id: data[0].id,
+              parcel_id: data,
               ts: today,
               land_value: parcel.land_val,
               total_value_assd: parcel.total_value_assd,
