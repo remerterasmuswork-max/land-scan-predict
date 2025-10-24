@@ -6,7 +6,7 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
-// Field mappings for each county's Esri REST API
+// Field mappings for each county's Esri REST API (FeatureServer with GeoJSON)
 const FIELD_MAPS: Record<string, any> = {
   wake: {
     url: "https://maps.wakegov.com/arcgis/rest/services/Property/Parcels/FeatureServer/0",
@@ -29,7 +29,7 @@ const FIELD_MAPS: Record<string, any> = {
     acreage: "REID_ACREAG",
   },
   mecklenburg: {
-    url: "https://mcmap.org/rest/services/CountyData/Parcels/MapServer/0",
+    url: "https://mcmap.org/rest/services/CountyData/Parcels/FeatureServer/0",
     pin: "PARCEL_ID",
     address: "SITE_ADDR",
     land_val: "LAND_VALUE",
@@ -108,12 +108,15 @@ serve(async (req) => {
     let failed = 0;
     let offset = 0;
     const batchSize = 2000;
+    const rpcBatchSize = 500;
     const nullAudit: Record<string, number> = {};
+
+    console.log(`Starting ingestion for ${county} from ${config.url}`);
 
     while (true) {
       const url = `${config.url}/query?where=${config.where || "1=1"}&outFields=*&returnGeometry=true&outSR=4326&f=geojson&resultOffset=${offset}&resultRecordCount=${batchSize}`;
       
-      console.log(`Fetching batch at offset ${offset}`);
+      console.log(`Fetching batch at offset ${offset}, URL: ${url}`);
       const response = await fetch(url);
       
       if (!response.ok) {
@@ -126,12 +129,19 @@ serve(async (req) => {
       const data = await response.json();
 
       if (!data.features || data.features.length === 0) {
+        console.log(`No more features at offset ${offset}, stopping`);
         break;
       }
 
-      // Process features
-      const parcelsToInsert: any[] = [];
-      const historyRecords: any[] = [];
+      console.log(`Received ${data.features.length} features`);
+
+      // Debug: log first feature for field inspection
+      if (offset === 0 && data.features.length > 0) {
+        console.log("FIRST FEATURE SAMPLE:", JSON.stringify(data.features[0], null, 2));
+      }
+
+      // Build batch payload for bulk RPC
+      const payloadBatch: any[] = [];
 
       for (const feature of data.features) {
         const attrs = feature.properties;
@@ -144,10 +154,23 @@ serve(async (req) => {
           continue;
         }
 
-        const parcel: any = {
+        // Skip if no geometry
+        if (!geom || (geom.type !== "Polygon" && geom.type !== "MultiPolygon")) {
+          console.error(`Invalid geometry type for PIN ${attrs[config.pin]}: ${geom?.type || 'null'}`);
+          failed++;
+          continue;
+        }
+
+        withGeometry++;
+
+        const parcelPayload: any = {
           pin: attrs[config.pin],
           county: county.toLowerCase(),
+          geometry: geom,
           address: attrs[config.address] || null,
+          city: attrs[config.city] || null,
+          zip: attrs[config.zip_code] || null,
+          calc_area_acres: null,
           land_val: attrs[config.land_val] || null,
           bldg_val: attrs[config.bldg_val] || null,
           total_value_assd: attrs[config.total_value_assd] || null,
@@ -160,121 +183,56 @@ serve(async (req) => {
           totsalprice: attrs[config.totsalprice] || null,
           owner_name: attrs[config.owner_name] || null,
           owner_mailing_1: attrs[config.owner_mailing_1] || null,
-          city: attrs[config.city] || null,
-          zip_code: attrs[config.zip_code] || null,
-          acreage: attrs[config.acreage] || null,
         };
 
         // Track nulls
-        for (const [key, value] of Object.entries(parcel)) {
-          if (value === null) {
+        for (const [key, value] of Object.entries(parcelPayload)) {
+          if (value === null && key !== 'calc_area_acres' && key !== 'geometry') {
             nullAudit[key] = (nullAudit[key] || 0) + 1;
           }
         }
 
-        // Store GeoJSON geometry
-        if (geom && (geom.type === "Polygon" || geom.type === "MultiPolygon")) {
-          withGeometry++;
-          parcel.geojson = JSON.stringify(geom);
-        }
-
-        parcelsToInsert.push(parcel);
+        payloadBatch.push(parcelPayload);
       }
 
-      // Batch upsert with PostGIS geometry conversion
-      const today = new Date().toISOString().split('T')[0];
-      
-      for (const parcel of parcelsToInsert) {
+      // Send in chunks to bulk RPC
+      for (let i = 0; i < payloadBatch.length; i += rpcBatchSize) {
+        const chunk = payloadBatch.slice(i, i + rpcBatchSize);
+        
+        if (i === 0 && offset === 0) {
+          console.log("FIRST RPC PAYLOAD SAMPLE:", JSON.stringify(chunk[0], null, 2));
+        }
+
         try {
-          if (parcel.geojson) {
-            // Use database function to insert with geometry
-            const { data, error } = await supabaseClient.rpc("insert_parcel_with_geojson", {
-              p_pin: parcel.pin,
-              p_county: parcel.county,
-              p_geojson: parcel.geojson,
-              p_address: parcel.address,
-              p_land_val: parcel.land_val,
-              p_bldg_val: parcel.bldg_val,
-              p_total_value_assd: parcel.total_value_assd,
-              p_type_and_use_code: parcel.type_and_use_code,
-              p_type_use_decode: parcel.type_use_decode,
-              p_land_code: parcel.land_code,
-              p_billing_class_decode: parcel.billing_class_decode,
-              p_deed_date: parcel.deed_date,
-              p_sale_date: parcel.sale_date,
-              p_totsalprice: parcel.totsalprice,
-              p_owner_name: parcel.owner_name,
-              p_owner_mailing_1: parcel.owner_mailing_1,
-              p_city: parcel.city,
-              p_zip_code: parcel.zip_code,
-              p_acreage: parcel.acreage,
-            });
+          const { data: insertedCount, error } = await supabaseClient.rpc("bulk_insert_parcels_with_geojson", {
+            p_payload: chunk,
+          });
 
-            if (error) {
-              console.error("Insert error:", error);
-              failed++;
-              continue;
-            }
-
-            // Add history record
-            historyRecords.push({
-              parcel_id: data,
-              ts: today,
-              land_value: parcel.land_val,
-              total_value_assd: parcel.total_value_assd,
-              type_and_use_code: parcel.type_and_use_code,
-              source: "ingest",
-            });
+          if (error) {
+            console.error(`RPC error for chunk at offset ${offset}:`, error);
+            failed += chunk.length;
           } else {
-            // Insert without geometry
-            const { data: inserted, error } = await supabaseClient
-              .from("parcels")
-              .upsert([parcel], {
-                onConflict: "pin,county",
-                ignoreDuplicates: false,
-              })
-              .select("id")
-              .single();
-
-            if (error) {
-              console.error("Insert error:", error);
-              failed++;
-              continue;
-            }
-
-            historyRecords.push({
-              parcel_id: inserted.id,
-              ts: today,
-              land_value: parcel.land_val,
-              total_value_assd: parcel.total_value_assd,
-              type_and_use_code: parcel.type_and_use_code,
-              source: "ingest",
-            });
+            console.log(`Inserted ${insertedCount} parcels via RPC`);
           }
         } catch (e) {
-          console.error("Parcel insert failed:", e);
-          failed++;
+          console.error(`RPC call failed:`, e);
+          failed += chunk.length;
         }
-      }
-
-      // Batch insert history records
-      if (historyRecords.length > 0) {
-        await supabaseClient.from("parcel_history").upsert(historyRecords, {
-          onConflict: "parcel_id,ts",
-          ignoreDuplicates: true,
-        });
       }
 
       processed += data.features.length;
       offset += batchSize;
 
-      console.log(`Processed ${processed} parcels, ${withGeometry} with geometry, ${failed} failed`);
+      console.log(`Processed ${processed} total, ${withGeometry} with geometry, ${failed} failed`);
 
       // Add delay between batches to avoid CPU limits
       await new Promise(resolve => setTimeout(resolve, 200));
 
       // Safety break
-      if (offset > 500000) break;
+      if (offset > 500000) {
+        console.log("Safety break at 500k offset");
+        break;
+      }
     }
 
     // Calculate median land value

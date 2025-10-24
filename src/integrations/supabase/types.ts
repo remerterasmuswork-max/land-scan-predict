@@ -806,6 +806,10 @@ export type Database = {
             }
             Returns: string
           }
+      bulk_insert_parcels_with_geojson: {
+        Args: { p_payload: Json }
+        Returns: number
+      }
       disablelongtransactions: { Args: never; Returns: string }
       dropgeometrycolumn:
         | {
@@ -949,25 +953,25 @@ export type Database = {
       gettransactionid: { Args: never; Returns: unknown }
       insert_parcel_with_geojson: {
         Args: {
-          p_acreage?: number
-          p_address?: string
-          p_billing_class_decode?: string
-          p_bldg_val?: number
-          p_city?: string
+          p_address: string
+          p_billing_class_decode: string
+          p_bldg_val: number
+          p_calc_area_acres: number
+          p_city: string
           p_county: Database["public"]["Enums"]["county_name"]
-          p_deed_date?: string
-          p_geojson: string
-          p_land_code?: string
-          p_land_val?: number
-          p_owner_mailing_1?: string
-          p_owner_name?: string
+          p_deed_date: string
+          p_geom_geojson: Json
+          p_land_code: string
+          p_land_val: number
+          p_owner_mailing_1: string
+          p_owner_name: string
           p_pin: string
-          p_sale_date?: string
-          p_total_value_assd?: number
-          p_totsalprice?: number
-          p_type_and_use_code?: number
-          p_type_use_decode?: string
-          p_zip_code?: string
+          p_sale_date: string
+          p_total_value_assd: number
+          p_totsalprice: number
+          p_type_and_use_code: number
+          p_type_use_decode: string
+          p_zip: string
         }
         Returns: string
       }
