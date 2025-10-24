@@ -9,6 +9,9 @@ verify_jwt = false
 [functions.ingest-county]
 verify_jwt = false
 
+[functions.load-zoning]
+verify_jwt = false
+
 [functions.parcel-detail]
 verify_jwt = false
 
