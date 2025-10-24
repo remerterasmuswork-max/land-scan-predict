@@ -182,6 +182,27 @@ export type Database = {
             foreignKeyName: "parcel_history_parcel_id_fkey"
             columns: ["parcel_id"]
             isOneToOne: false
+            referencedRelation: "parcel_infra_mv"
+            referencedColumns: ["parcel_id"]
+          },
+          {
+            foreignKeyName: "parcel_history_parcel_id_fkey"
+            columns: ["parcel_id"]
+            isOneToOne: false
+            referencedRelation: "parcel_signals_mv"
+            referencedColumns: ["parcel_id"]
+          },
+          {
+            foreignKeyName: "parcel_history_parcel_id_fkey"
+            columns: ["parcel_id"]
+            isOneToOne: false
+            referencedRelation: "parcel_zoning_mv"
+            referencedColumns: ["parcel_id"]
+          },
+          {
+            foreignKeyName: "parcel_history_parcel_id_fkey"
+            columns: ["parcel_id"]
+            isOneToOne: false
             referencedRelation: "parcels"
             referencedColumns: ["id"]
           },
@@ -243,6 +264,27 @@ export type Database = {
           updated_at?: string | null
         }
         Relationships: [
+          {
+            foreignKeyName: "parcel_scores_parcel_id_fkey"
+            columns: ["parcel_id"]
+            isOneToOne: true
+            referencedRelation: "parcel_infra_mv"
+            referencedColumns: ["parcel_id"]
+          },
+          {
+            foreignKeyName: "parcel_scores_parcel_id_fkey"
+            columns: ["parcel_id"]
+            isOneToOne: true
+            referencedRelation: "parcel_signals_mv"
+            referencedColumns: ["parcel_id"]
+          },
+          {
+            foreignKeyName: "parcel_scores_parcel_id_fkey"
+            columns: ["parcel_id"]
+            isOneToOne: true
+            referencedRelation: "parcel_zoning_mv"
+            referencedColumns: ["parcel_id"]
+          },
           {
             foreignKeyName: "parcel_scores_parcel_id_fkey"
             columns: ["parcel_id"]
@@ -412,6 +454,27 @@ export type Database = {
             foreignKeyName: "user_saved_parcels_parcel_id_fkey"
             columns: ["parcel_id"]
             isOneToOne: false
+            referencedRelation: "parcel_infra_mv"
+            referencedColumns: ["parcel_id"]
+          },
+          {
+            foreignKeyName: "user_saved_parcels_parcel_id_fkey"
+            columns: ["parcel_id"]
+            isOneToOne: false
+            referencedRelation: "parcel_signals_mv"
+            referencedColumns: ["parcel_id"]
+          },
+          {
+            foreignKeyName: "user_saved_parcels_parcel_id_fkey"
+            columns: ["parcel_id"]
+            isOneToOne: false
+            referencedRelation: "parcel_zoning_mv"
+            referencedColumns: ["parcel_id"]
+          },
+          {
+            foreignKeyName: "user_saved_parcels_parcel_id_fkey"
+            columns: ["parcel_id"]
+            isOneToOne: false
             referencedRelation: "parcels"
             referencedColumns: ["id"]
           },
@@ -527,6 +590,90 @@ export type Database = {
           f_table_schema?: unknown
           srid?: number | null
           type?: string | null
+        }
+        Relationships: []
+      }
+      parcel_infra_mv: {
+        Row: {
+          county: Database["public"]["Enums"]["county_name"] | null
+          dist_future_highway_m: number | null
+          inside_urban_service_area: boolean | null
+          parcel_id: string | null
+          pin: string | null
+        }
+        Relationships: []
+      }
+      parcel_signals_mv: {
+        Row: {
+          acreage: number | null
+          county: Database["public"]["Enums"]["county_name"] | null
+          deed_date: string | null
+          dist_future_highway_m: number | null
+          inside_urban_service_area: boolean | null
+          land_val: number | null
+          land_val_yoy: number | null
+          owner_type: Database["public"]["Enums"]["owner_type"] | null
+          parcel_id: string | null
+          pin: string | null
+          total_value_assd: number | null
+          ts_curr: string | null
+          ts_prev: string | null
+          type_and_use_code: number | null
+          use_change_flag: boolean | null
+          zone_code: string | null
+          zone_desc: string | null
+        }
+        Relationships: []
+      }
+      parcel_yoy: {
+        Row: {
+          land_curr: number | null
+          land_prev: number | null
+          land_val_yoy: number | null
+          parcel_id: string | null
+          ts_curr: string | null
+          ts_prev: string | null
+          use_change_flag: boolean | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "parcel_history_parcel_id_fkey"
+            columns: ["parcel_id"]
+            isOneToOne: false
+            referencedRelation: "parcel_infra_mv"
+            referencedColumns: ["parcel_id"]
+          },
+          {
+            foreignKeyName: "parcel_history_parcel_id_fkey"
+            columns: ["parcel_id"]
+            isOneToOne: false
+            referencedRelation: "parcel_signals_mv"
+            referencedColumns: ["parcel_id"]
+          },
+          {
+            foreignKeyName: "parcel_history_parcel_id_fkey"
+            columns: ["parcel_id"]
+            isOneToOne: false
+            referencedRelation: "parcel_zoning_mv"
+            referencedColumns: ["parcel_id"]
+          },
+          {
+            foreignKeyName: "parcel_history_parcel_id_fkey"
+            columns: ["parcel_id"]
+            isOneToOne: false
+            referencedRelation: "parcels"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      parcel_zoning_mv: {
+        Row: {
+          county: Database["public"]["Enums"]["county_name"] | null
+          jurisdiction: string | null
+          parcel_id: string | null
+          pin: string | null
+          zone_code: string | null
+          zone_desc: string | null
         }
         Relationships: []
       }
@@ -832,6 +979,7 @@ export type Database = {
       }
       postgis_version: { Args: never; Returns: string }
       postgis_wagyu_version: { Args: never; Returns: string }
+      refresh_parcel_views: { Args: never; Returns: undefined }
       st_3dclosestpoint: {
         Args: { geom1: unknown; geom2: unknown }
         Returns: unknown
