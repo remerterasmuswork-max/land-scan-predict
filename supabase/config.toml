@@ -1,19 +1,22 @@
 project_id = "ofolrzxsowtktgaszwst"
 
-[functions.parcel-search]
-verify_jwt = false
-
-[functions.parcel-detail]
+[functions.backfill-history]
 verify_jwt = false
 
 [functions.county-status]
 verify_jwt = false
 
-[functions.top-parcels]
-verify_jwt = false
-
 [functions.ingest-county]
 verify_jwt = false
 
+[functions.parcel-detail]
+verify_jwt = false
+
+[functions.parcel-search]
+verify_jwt = false
+
 [functions.score-county]
+verify_jwt = false
+
+[functions.top-parcels]
 verify_jwt = false

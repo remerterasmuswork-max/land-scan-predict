@@ -14,16 +14,17 @@ interface CountyStatus {
   lastIngestion?: string;
   isIngesting: boolean;
   isScoring: boolean;
+  isBackfilling: boolean;
 }
 
 const AdminDashboard = () => {
   const { toast } = useToast();
   const [counties, setCounties] = useState<CountyStatus[]>([
-    { name: "wake", displayName: "Wake County", status: "pending", totalParcels: 0, isIngesting: false, isScoring: false },
-    { name: "mecklenburg", displayName: "Mecklenburg County", status: "pending", totalParcels: 0, isIngesting: false, isScoring: false },
-    { name: "durham", displayName: "Durham County", status: "pending", totalParcels: 0, isIngesting: false, isScoring: false },
-    { name: "orange", displayName: "Orange County", status: "pending", totalParcels: 0, isIngesting: false, isScoring: false },
-    { name: "chatham", displayName: "Chatham County", status: "pending", totalParcels: 0, isIngesting: false, isScoring: false },
+    { name: "wake", displayName: "Wake County", status: "pending", totalParcels: 0, isIngesting: false, isScoring: false, isBackfilling: false },
+    { name: "mecklenburg", displayName: "Mecklenburg County", status: "pending", totalParcels: 0, isIngesting: false, isScoring: false, isBackfilling: false },
+    { name: "durham", displayName: "Durham County", status: "pending", totalParcels: 0, isIngesting: false, isScoring: false, isBackfilling: false },
+    { name: "orange", displayName: "Orange County", status: "pending", totalParcels: 0, isIngesting: false, isScoring: false, isBackfilling: false },
+    { name: "chatham", displayName: "Chatham County", status: "pending", totalParcels: 0, isIngesting: false, isScoring: false, isBackfilling: false },
   ]);
 
   const handleIngest = async (countyName: string) => {
@@ -104,6 +105,44 @@ const AdminDashboard = () => {
     }
   };
 
+  const handleBackfill = async (countyName: string) => {
+    setCounties(prev => prev.map(c => 
+      c.name === countyName ? { ...c, isBackfilling: true } : c
+    ));
+
+    toast({
+      title: `Backfilling history for ${countyName}...`,
+      description: "Creating 24 months of historical snapshots",
+    });
+
+    try {
+      const { data, error } = await supabase.functions.invoke("backfill-history", {
+        body: { county: countyName, monthsBack: 24 },
+      });
+
+      if (error) throw error;
+
+      toast({
+        title: "Backfill complete!",
+        description: `${data.totalRecords} history records created`,
+      });
+
+      setCounties(prev => prev.map(c => 
+        c.name === countyName ? { ...c, isBackfilling: false } : c
+      ));
+    } catch (err: any) {
+      toast({
+        title: "Backfill failed",
+        description: err.message || "Unknown error",
+        variant: "destructive",
+      });
+
+      setCounties(prev => prev.map(c => 
+        c.name === countyName ? { ...c, isBackfilling: false } : c
+      ));
+    }
+  };
+
   return (
     <div className="container mx-auto p-6 max-w-6xl">
       <div className="mb-8">
@@ -144,10 +183,10 @@ const AdminDashboard = () => {
                 </div>
               </div>
 
-              <div className="flex items-center gap-3">
+              <div className="flex items-center gap-2">
                 <Button
                   onClick={() => handleIngest(county.name)}
-                  disabled={county.isIngesting || county.isScoring}
+                  disabled={county.isIngesting || county.isScoring || county.isBackfilling}
                   variant="outline"
                   size="sm"
                 >
@@ -165,8 +204,27 @@ const AdminDashboard = () => {
                 </Button>
 
                 <Button
+                  onClick={() => handleBackfill(county.name)}
+                  disabled={county.isBackfilling || county.isIngesting || county.isScoring || county.totalParcels === 0}
+                  variant="outline"
+                  size="sm"
+                >
+                  {county.isBackfilling ? (
+                    <>
+                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                      Backfilling...
+                    </>
+                  ) : (
+                    <>
+                      <Database className="h-4 w-4 mr-2" />
+                      Backfill
+                    </>
+                  )}
+                </Button>
+
+                <Button
                   onClick={() => handleScore(county.name)}
-                  disabled={county.isScoring || county.isIngesting || county.totalParcels === 0}
+                  disabled={county.isScoring || county.isIngesting || county.isBackfilling || county.totalParcels === 0}
                   size="sm"
                 >
                   {county.isScoring ? (
@@ -192,6 +250,7 @@ const AdminDashboard = () => {
         <ol className="list-decimal list-inside space-y-2 text-sm">
           <li>Click <strong>Ingest</strong> for each county to pull parcel data from county GIS servers</li>
           <li>Wait for ingestion to complete (typically 1-3 minutes per county)</li>
+          <li>Click <strong>Backfill</strong> to generate 24 months of historical data for YoY calculations</li>
           <li>Click <strong>Score</strong> to run the upzoning prediction model on ingested parcels</li>
           <li>View results on the main dashboard and map</li>
         </ol>
