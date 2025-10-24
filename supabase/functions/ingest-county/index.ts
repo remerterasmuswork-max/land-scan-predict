@@ -6,6 +6,65 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
+// Field mappings for each county's Esri REST API
+const FIELD_MAPS: Record<string, any> = {
+  wake: {
+    url: "https://services.wakegov.com/arcgis/rest/services/RealEstate/Parcels/FeatureServer/0",
+    pin: "PIN_NUM",
+    address: "SITE_ADDRESS",
+    land_val: "LAND_VAL",
+    bldg_val: "BLDG_VAL",
+    total_value_assd: "TOTAL_VALUE_ASSD",
+    type_and_use_code: "TYPE_AND_USE",
+    deed_date: "DEED_DATE",
+    sale_date: "SALE_DATE",
+    totsalprice: "TOTSALPRICE",
+    owner_name: "OWNER",
+    acreage: "REID_ACREAG",
+  },
+  mecklenburg: {
+    url: "https://mcmap.org/rest/services/CountyData/Parcels/MapServer/0",
+    pin: "PARCEL_ID",
+    address: "SITE_ADDR",
+    land_val: "LAND_VALUE",
+    bldg_val: "BLDG_VALUE",
+    total_value_assd: "TOTAL_VALUE",
+    type_and_use_code: "USE_CODE",
+    deed_date: "DEED_DATE",
+    sale_date: "SALE_DATE",
+    totsalprice: "SALE_PRICE",
+    owner_name: "OWNER_NAME",
+    acreage: "ACREAGE",
+  },
+  durham: {
+    url: "https://services.nconemap.gov/secure/rest/services/NC1Map_Parcels/FeatureServer/0",
+    where: "COUNTY = 'DURHAM'",
+    pin: "PIN",
+    land_val: "LAND_VALUE",
+    total_value_assd: "TOTAL_VALUE",
+    deed_date: "DEED_DATE",
+    owner_name: "OWNER_NAME",
+  },
+  orange: {
+    url: "https://services.nconemap.gov/secure/rest/services/NC1Map_Parcels/FeatureServer/0",
+    where: "COUNTY = 'ORANGE'",
+    pin: "PIN",
+    land_val: "LAND_VALUE",
+    total_value_assd: "TOTAL_VALUE",
+    deed_date: "DEED_DATE",
+    owner_name: "OWNER_NAME",
+  },
+  chatham: {
+    url: "https://services.nconemap.gov/secure/rest/services/NC1Map_Parcels/FeatureServer/0",
+    where: "COUNTY = 'CHATHAM'",
+    pin: "PIN",
+    land_val: "LAND_VALUE",
+    total_value_assd: "TOTAL_VALUE",
+    deed_date: "DEED_DATE",
+    owner_name: "OWNER_NAME",
+  },
+};
+
 serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
@@ -19,223 +78,123 @@ serve(async (req) => {
 
     const { county } = await req.json();
 
-    if (!county) {
-      throw new Error("County parameter is required");
+    if (!county || !FIELD_MAPS[county.toLowerCase()]) {
+      throw new Error(`County ${county} not supported`);
     }
 
-    console.log(`Starting ingestion for ${county} county`);
+    console.log(`Starting ingestion for ${county}`);
 
-    // Create/update ingestion job
-    const { data: job, error: jobError } = await supabaseClient
-      .from("ingestion_jobs")
-      .insert({
-        county,
-        status: "processing",
-        started_at: new Date().toISOString(),
-      })
-      .select()
-      .single();
-
-    if (jobError) throw jobError;
-
-    // County-specific Esri REST endpoints
-    const endpoints: Record<string, string> = {
-      wake: "https://maps.wakegov.com/arcgis/rest/services/Property/Parcels/MapServer/0",
-      mecklenburg: "https://parcelviewer.geodecisions.com/arcgis/rest/services/Charlotte/Public/MapServer/0",
-      durham: "https://webgis.durhamnc.gov/server/rest/services/PublicServices/Property/MapServer/0",
-      orange: "https://gis.orangecountync.gov/arcgis/rest/services/WebMainService/MapServer/0",
-      chatham: "https://services.nconemap.gov/secure/rest/services/NC1Map_Parcels/FeatureServer/0",
-    };
-
-    const endpoint = endpoints[county.toLowerCase()];
-    if (!endpoint) {
-      throw new Error(`No endpoint configured for ${county} county`);
-    }
-
-    // Fetch parcels from Esri REST API
-    const queryParams = new URLSearchParams({
-      where: county.toLowerCase() === "chatham" ? "COUNTY='CHATHAM'" : "1=1",
-      outFields: "*",
-      returnGeometry: "true",
-      f: "json",
-      resultRecordCount: "1000", // Limit for demo - production should paginate
-    });
-
-    console.log(`Fetching from: ${endpoint}/query?${queryParams}`);
+    const config = FIELD_MAPS[county.toLowerCase()];
     
-    const response = await fetch(`${endpoint}/query?${queryParams}`);
-    const data = await response.json();
-
-    if (!data.features) {
-      throw new Error(`No features returned from ${county} county endpoint`);
-    }
-
-    console.log(`Fetched ${data.features.length} parcels from ${county}`);
-
     let processed = 0;
-    let failed = 0;
     let withGeometry = 0;
-    const landValues: number[] = [];
+    let offset = 0;
+    const batchSize = 1000;
+    const nullAudit: Record<string, number> = {};
 
-    // Process each parcel
-    for (const feature of data.features) {
-      try {
+    while (true) {
+      const url = `${config.url}/query?where=${config.where || "1=1"}&outFields=*&returnGeometry=true&f=json&resultOffset=${offset}&resultRecordCount=${batchSize}`;
+      
+      console.log(`Fetching batch at offset ${offset}`);
+      const response = await fetch(url);
+      const data = await response.json();
+
+      if (!data.features || data.features.length === 0) {
+        break;
+      }
+
+      const parcels = data.features.map((feature: any) => {
         const attrs = feature.attributes;
         const geom = feature.geometry;
 
-        // Map county-specific field names to our schema
-        const pin = attrs.PIN || attrs.PARCELPIN || attrs.REID || attrs.PARCEL_ID || String(attrs.OBJECTID);
-        const address = attrs.SITEADDRES || attrs.ADDR1 || attrs.ADDRESS || attrs.SITE_ADDR;
-        const city = attrs.CITY || attrs.MUNICIPA || attrs.MUNICIPALITY;
-        const zip = attrs.ZIPCODE || attrs.ZIP || attrs.ZIP_CODE;
-        
-        const acreage = parseFloat(attrs.ACREAGE || attrs.CALC_AREA || attrs.ACRES || 0);
-        const landVal = parseFloat(attrs.LAND_VAL || attrs.LANDVALUE || attrs.LAND_VALUE || 0);
-        const bldgVal = parseFloat(attrs.BLDG_VAL || attrs.BUILDINGVALUE || attrs.BLDG_VALUE || 0);
-        const totalVal = parseFloat(attrs.TOTAL_VALUE_ASSD || attrs.TOTALVALUE || attrs.TOTAL_VALUE || 0);
-        
-        const typeAndUse = parseInt(attrs.TYPE_AND_USE || attrs.TYPE_USE || attrs.TYPEUSE || 0);
-        const typeUseDecode = attrs.TYPE_USE_DECODE || attrs.TYPE_DESC || attrs.TYPE_DECODE || null;
-        const landCode = attrs.LAND_CODE || attrs.LANDCODE || null;
-        const billingClass = attrs.BILLING_CLASS_DECODE || attrs.CLASS_DECODE || null;
-        
-        const deedDate = attrs.DEED_DATE || attrs.DEEDDATE || null;
-        const saleDate = attrs.SALE_DATE || attrs.SALEDATE || null;
-        const salePrice = parseFloat(attrs.TOTSALPRICE || attrs.SALEPRICE || attrs.SALE_PRICE || 0);
-        
-        const ownerName = attrs.OWNER || attrs.OWNERNAME || attrs.OWNER_NAME || null;
-        const ownerMail1 = attrs.ADDR1 || attrs.MAIL_ADDR1 || null;
-        const ownerMail2 = attrs.ADDR2 || attrs.MAIL_ADDR2 || null;
+        // Map fields
+        const parcel: any = {
+          pin: attrs[config.pin],
+          county: county.toLowerCase(),
+          address: attrs[config.address] || null,
+          land_val: attrs[config.land_val] || null,
+          bldg_val: attrs[config.bldg_val] || null,
+          total_value_assd: attrs[config.total_value_assd] || null,
+          type_and_use_code: attrs[config.type_and_use_code] || null,
+          deed_date: attrs[config.deed_date] ? new Date(attrs[config.deed_date]).toISOString().split('T')[0] : null,
+          sale_date: attrs[config.sale_date] ? new Date(attrs[config.sale_date]).toISOString().split('T')[0] : null,
+          totsalprice: attrs[config.totsalprice] || null,
+          owner_name: attrs[config.owner_name] || null,
+          acreage: attrs[config.acreage] || null,
+        };
 
-        if (landVal > 0) landValues.push(landVal);
-
-        // Convert Esri geometry to WKT
-        let wkt = null;
-        let centroidWkt = null;
-        
-        if (geom) {
-          withGeometry++;
-          if (geom.rings) {
-            // Polygon
-            const rings = geom.rings.map((ring: number[][]) => 
-              "(" + ring.map((pt: number[]) => `${pt[0]} ${pt[1]}`).join(",") + ")"
-            ).join(",");
-            wkt = `SRID=4326;POLYGON(${rings})`;
-            
-            // Calculate centroid (simple average of first ring)
-            const firstRing = geom.rings[0];
-            const sumX = firstRing.reduce((sum: number, pt: number[]) => sum + pt[0], 0);
-            const sumY = firstRing.reduce((sum: number, pt: number[]) => sum + pt[1], 0);
-            const centX = sumX / firstRing.length;
-            const centY = sumY / firstRing.length;
-            centroidWkt = `SRID=4326;POINT(${centX} ${centY})`;
-          } else if (geom.x && geom.y) {
-            // Point
-            centroidWkt = `SRID=4326;POINT(${geom.x} ${geom.y})`;
+        // Track nulls
+        for (const [key, value] of Object.entries(parcel)) {
+          if (value === null) {
+            nullAudit[key] = (nullAudit[key] || 0) + 1;
           }
         }
 
-        // Upsert parcel
-        const { data: parcel, error: parcelError } = await supabaseClient
-          .from("parcels")
-          .upsert({
-            pin,
-            county: county.toLowerCase(),
-            address,
-            city,
-            zip_code: zip,
-            geometry: wkt,
-            centroid: centroidWkt,
-            acreage,
-            calc_area_acres: acreage,
-            land_val: landVal,
-            bldg_val: bldgVal,
-            total_value_assd: totalVal,
-            type_and_use_code: typeAndUse,
-            type_use_decode: typeUseDecode,
-            land_code: landCode,
-            billing_class_decode: billingClass,
-            deed_date: deedDate ? new Date(deedDate).toISOString().split('T')[0] : null,
-            sale_date: saleDate ? new Date(saleDate).toISOString().split('T')[0] : null,
-            totsalprice: salePrice,
-            owner_name: ownerName,
-            owner_mailing_1: ownerMail1,
-            owner_mailing_2: ownerMail2,
-            updated_at: new Date().toISOString(),
-          }, {
-            onConflict: "pin,county",
-            ignoreDuplicates: false,
-          })
-          .select()
-          .single();
-
-        if (parcelError) {
-          console.error(`Error upserting parcel ${pin}:`, parcelError);
-          failed++;
-          continue;
+        // Convert geometry to PostGIS format (simplified - just track if present)
+        if (geom && (geom.rings || geom.x)) {
+          withGeometry++;
+          parcel.geometry = JSON.stringify(geom); // Store as JSON for now
+          
+          // Calculate centroid
+          if (geom.rings) {
+            const firstRing = geom.rings[0];
+            if (firstRing && firstRing.length > 0) {
+              const centerX = firstRing.reduce((sum: number, coord: number[]) => sum + coord[0], 0) / firstRing.length;
+              const centerY = firstRing.reduce((sum: number, coord: number[]) => sum + coord[1], 0) / firstRing.length;
+              parcel.centroid = `POINT(${centerX} ${centerY})`;
+            }
+          } else if (geom.x && geom.y) {
+            parcel.centroid = `POINT(${geom.x} ${geom.y})`;
+          }
         }
 
-        // Insert history snapshot
-        await supabaseClient
-          .from("parcel_history")
-          .insert({
-            parcel_id: parcel.id,
-            ts: new Date().toISOString().split('T')[0],
-            land_value: landVal,
-            total_value_assd: totalVal,
-            type_and_use_code: typeAndUse,
-            type_use_decode: typeUseDecode,
-            source: "ingest",
-          })
-          .select()
-          .single();
+        return parcel;
+      });
 
-        processed++;
-      } catch (err) {
-        console.error("Error processing parcel:", err);
-        failed++;
+      // Upsert parcels
+      const { error: upsertError } = await supabaseClient
+        .from("parcels")
+        .upsert(parcels, {
+          onConflict: "pin,county",
+          ignoreDuplicates: false,
+        });
+
+      if (upsertError) {
+        console.error("Upsert error:", upsertError);
+        throw upsertError;
       }
+
+      processed += data.features.length;
+      offset += batchSize;
+
+      console.log(`Processed ${processed} parcels so far`);
+
+      // Safety break
+      if (offset > 500000) break;
     }
 
-    // Calculate statistics
-    const medianLandVal = landValues.length > 0
-      ? landValues.sort((a, b) => a - b)[Math.floor(landValues.length / 2)]
-      : 0;
+    // Calculate median land value
+    const { data: medianData } = await supabaseClient
+      .from("parcels")
+      .select("land_val")
+      .eq("county", county.toLowerCase())
+      .not("land_val", "is", null)
+      .order("land_val", { ascending: true })
+      .limit(1)
+      .range(Math.floor(processed / 2), Math.floor(processed / 2));
 
-    // Update job status
-    await supabaseClient
-      .from("ingestion_jobs")
-      .update({
-        status: "completed",
-        completed_at: new Date().toISOString(),
-        records_processed: processed,
-        records_failed: failed,
-        records_with_geometry: withGeometry,
-        median_land_val: medianLandVal,
-      })
-      .eq("id", job.id);
+    const medianLandVal = medianData && medianData.length > 0 ? medianData[0].land_val : null;
 
-    // Update county record
-    await supabaseClient
-      .from("counties")
-      .update({
-        last_ingestion_date: new Date().toISOString(),
-        total_parcels: processed,
-        status: "completed",
-        updated_at: new Date().toISOString(),
-      })
-      .eq("name", county.toLowerCase());
-
-    console.log(`Ingestion complete for ${county}: ${processed} processed, ${failed} failed`);
+    console.log(`Ingestion complete for ${county}: ${processed} parcels, ${withGeometry} with geometry`);
 
     return new Response(
       JSON.stringify({
         success: true,
         county,
         processed,
-        failed,
         withGeometry,
         medianLandVal,
+        nullAudit,
       }),
       {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
