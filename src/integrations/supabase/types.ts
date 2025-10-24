@@ -50,6 +50,45 @@ export type Database = {
         }
         Relationships: []
       }
+      infrastructure_layers: {
+        Row: {
+          county: Database["public"]["Enums"]["county_name"]
+          created_at: string | null
+          description: string | null
+          effective_date: string | null
+          geometry: unknown
+          id: string
+          infra_type: string
+          name: string | null
+          status: string | null
+          updated_at: string | null
+        }
+        Insert: {
+          county: Database["public"]["Enums"]["county_name"]
+          created_at?: string | null
+          description?: string | null
+          effective_date?: string | null
+          geometry?: unknown
+          id?: string
+          infra_type: string
+          name?: string | null
+          status?: string | null
+          updated_at?: string | null
+        }
+        Update: {
+          county?: Database["public"]["Enums"]["county_name"]
+          created_at?: string | null
+          description?: string | null
+          effective_date?: string | null
+          geometry?: unknown
+          id?: string
+          infra_type?: string
+          name?: string | null
+          status?: string | null
+          updated_at?: string | null
+        }
+        Relationships: []
+      }
       ingestion_jobs: {
         Row: {
           completed_at: string | null
@@ -58,8 +97,11 @@ export type Database = {
           created_by: string | null
           error_message: string | null
           id: string
+          median_land_val: number | null
+          null_audit: Json | null
           records_failed: number | null
           records_processed: number | null
+          records_with_geometry: number | null
           started_at: string | null
           status: Database["public"]["Enums"]["ingestion_status"] | null
         }
@@ -70,8 +112,11 @@ export type Database = {
           created_by?: string | null
           error_message?: string | null
           id?: string
+          median_land_val?: number | null
+          null_audit?: Json | null
           records_failed?: number | null
           records_processed?: number | null
+          records_with_geometry?: number | null
           started_at?: string | null
           status?: Database["public"]["Enums"]["ingestion_status"] | null
         }
@@ -82,8 +127,11 @@ export type Database = {
           created_by?: string | null
           error_message?: string | null
           id?: string
+          median_land_val?: number | null
+          null_audit?: Json | null
           records_failed?: number | null
           records_processed?: number | null
+          records_with_geometry?: number | null
           started_at?: string | null
           status?: Database["public"]["Enums"]["ingestion_status"] | null
         }
@@ -95,9 +143,12 @@ export type Database = {
           id: string
           land_value: number | null
           parcel_id: string
+          source: string | null
           total_value: number | null
+          total_value_assd: number | null
+          ts: string
           type_and_use: string | null
-          year: number
+          type_and_use_code: number | null
           zoning_code: string | null
         }
         Insert: {
@@ -105,9 +156,12 @@ export type Database = {
           id?: string
           land_value?: number | null
           parcel_id: string
+          source?: string | null
           total_value?: number | null
+          total_value_assd?: number | null
+          ts?: string
           type_and_use?: string | null
-          year: number
+          type_and_use_code?: number | null
           zoning_code?: string | null
         }
         Update: {
@@ -115,9 +169,12 @@ export type Database = {
           id?: string
           land_value?: number | null
           parcel_id?: string
+          source?: string | null
           total_value?: number | null
+          total_value_assd?: number | null
+          ts?: string
           type_and_use?: string | null
-          year?: number
+          type_and_use_code?: number | null
           zoning_code?: string | null
         }
         Relationships: [
@@ -132,10 +189,13 @@ export type Database = {
       }
       parcel_scores: {
         Row: {
+          adjacent_upzone_count: number | null
           computed_at: string | null
           confidence_score: number | null
           created_at: string | null
           distance_to_infrastructure: number | null
+          explanations: Json | null
+          features: Json | null
           id: string
           investment_score: number | null
           land_value_yoy_change: number | null
@@ -143,13 +203,17 @@ export type Database = {
           nearby_rezoned_count: number | null
           parcel_id: string
           rezoning_probability: number | null
+          undervaluation_pct: number | null
           updated_at: string | null
         }
         Insert: {
+          adjacent_upzone_count?: number | null
           computed_at?: string | null
           confidence_score?: number | null
           created_at?: string | null
           distance_to_infrastructure?: number | null
+          explanations?: Json | null
+          features?: Json | null
           id?: string
           investment_score?: number | null
           land_value_yoy_change?: number | null
@@ -157,13 +221,17 @@ export type Database = {
           nearby_rezoned_count?: number | null
           parcel_id: string
           rezoning_probability?: number | null
+          undervaluation_pct?: number | null
           updated_at?: string | null
         }
         Update: {
+          adjacent_upzone_count?: number | null
           computed_at?: string | null
           confidence_score?: number | null
           created_at?: string | null
           distance_to_infrastructure?: number | null
+          explanations?: Json | null
+          features?: Json | null
           id?: string
           investment_score?: number | null
           land_value_yoy_change?: number | null
@@ -171,6 +239,7 @@ export type Database = {
           nearby_rezoned_count?: number | null
           parcel_id?: string
           rezoning_probability?: number | null
+          undervaluation_pct?: number | null
           updated_at?: string | null
         }
         Relationships: [
@@ -187,19 +256,32 @@ export type Database = {
         Row: {
           acreage: number | null
           address: string | null
+          billing_class_decode: string | null
+          bldg_val: number | null
+          calc_area_acres: number | null
           centroid: unknown
           city: string | null
           county: Database["public"]["Enums"]["county_name"]
           created_at: string | null
+          deed_acres: number | null
           deed_date: string | null
           geometry: unknown
           id: string
+          land_code: string | null
+          land_val: number | null
           land_value: number | null
+          owner_mailing_1: string | null
+          owner_mailing_2: string | null
           owner_name: string | null
           owner_type: Database["public"]["Enums"]["owner_type"] | null
           pin: string
+          sale_date: string | null
           total_value: number | null
+          total_value_assd: number | null
+          totsalprice: number | null
           type_and_use: string | null
+          type_and_use_code: number | null
+          type_use_decode: string | null
           updated_at: string | null
           zip_code: string | null
           zoning_category: Database["public"]["Enums"]["zoning_category"] | null
@@ -208,19 +290,32 @@ export type Database = {
         Insert: {
           acreage?: number | null
           address?: string | null
+          billing_class_decode?: string | null
+          bldg_val?: number | null
+          calc_area_acres?: number | null
           centroid?: unknown
           city?: string | null
           county: Database["public"]["Enums"]["county_name"]
           created_at?: string | null
+          deed_acres?: number | null
           deed_date?: string | null
           geometry?: unknown
           id?: string
+          land_code?: string | null
+          land_val?: number | null
           land_value?: number | null
+          owner_mailing_1?: string | null
+          owner_mailing_2?: string | null
           owner_name?: string | null
           owner_type?: Database["public"]["Enums"]["owner_type"] | null
           pin: string
+          sale_date?: string | null
           total_value?: number | null
+          total_value_assd?: number | null
+          totsalprice?: number | null
           type_and_use?: string | null
+          type_and_use_code?: number | null
+          type_use_decode?: string | null
           updated_at?: string | null
           zip_code?: string | null
           zoning_category?:
@@ -231,19 +326,32 @@ export type Database = {
         Update: {
           acreage?: number | null
           address?: string | null
+          billing_class_decode?: string | null
+          bldg_val?: number | null
+          calc_area_acres?: number | null
           centroid?: unknown
           city?: string | null
           county?: Database["public"]["Enums"]["county_name"]
           created_at?: string | null
+          deed_acres?: number | null
           deed_date?: string | null
           geometry?: unknown
           id?: string
+          land_code?: string | null
+          land_val?: number | null
           land_value?: number | null
+          owner_mailing_1?: string | null
+          owner_mailing_2?: string | null
           owner_name?: string | null
           owner_type?: Database["public"]["Enums"]["owner_type"] | null
           pin?: string
+          sale_date?: string | null
           total_value?: number | null
+          total_value_assd?: number | null
+          totsalprice?: number | null
           type_and_use?: string | null
+          type_and_use_code?: number | null
+          type_use_decode?: string | null
           updated_at?: string | null
           zip_code?: string | null
           zoning_category?:
@@ -308,6 +416,75 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      zoning_layers: {
+        Row: {
+          county: Database["public"]["Enums"]["county_name"]
+          created_at: string | null
+          effective_date: string | null
+          geometry: unknown
+          id: string
+          jurisdiction: string | null
+          updated_at: string | null
+          zone_code: string
+          zone_desc: string | null
+        }
+        Insert: {
+          county: Database["public"]["Enums"]["county_name"]
+          created_at?: string | null
+          effective_date?: string | null
+          geometry?: unknown
+          id?: string
+          jurisdiction?: string | null
+          updated_at?: string | null
+          zone_code: string
+          zone_desc?: string | null
+        }
+        Update: {
+          county?: Database["public"]["Enums"]["county_name"]
+          created_at?: string | null
+          effective_date?: string | null
+          geometry?: unknown
+          id?: string
+          jurisdiction?: string | null
+          updated_at?: string | null
+          zone_code?: string
+          zone_desc?: string | null
+        }
+        Relationships: []
+      }
+      zoning_texts: {
+        Row: {
+          chunk_index: number
+          chunk_text: string
+          county: Database["public"]["Enums"]["county_name"]
+          created_at: string | null
+          embedding: string | null
+          id: string
+          source_url: string | null
+          zone_code: string
+        }
+        Insert: {
+          chunk_index: number
+          chunk_text: string
+          county: Database["public"]["Enums"]["county_name"]
+          created_at?: string | null
+          embedding?: string | null
+          id?: string
+          source_url?: string | null
+          zone_code: string
+        }
+        Update: {
+          chunk_index?: number
+          chunk_text?: string
+          county?: Database["public"]["Enums"]["county_name"]
+          created_at?: string | null
+          embedding?: string | null
+          id?: string
+          source_url?: string | null
+          zone_code?: string
+        }
+        Relationships: []
       }
     }
     Views: {

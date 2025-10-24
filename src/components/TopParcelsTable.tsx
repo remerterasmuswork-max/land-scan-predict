@@ -68,19 +68,17 @@ const TopParcelsTable = ({ onParcelSelect }: TopParcelsTableProps) => {
                     PIN: {parcel.pin} • {parcel.county} County
                   </div>
                 </div>
-                <div className="text-right ml-4">
                   <div className="text-2xl font-bold text-success">
-                    {parcel.investmentScore?.toFixed(1) || "N/A"}
+                    {(parcel.investmentScore * 100).toFixed(1) || "N/A"}
                   </div>
-                  <div className="text-xs text-muted-foreground">Score</div>
-                </div>
+                  <div className="text-xs text-muted-foreground">Score %</div>
               </div>
 
               <div className="grid grid-cols-4 gap-4 mt-3 pt-3 border-t">
                 <div>
                   <div className="text-xs text-muted-foreground">Rezoning</div>
                   <div className="text-sm font-semibold">
-                    {parcel.rezoningProbability?.toFixed(0) || "N/A"}%
+                    {(parcel.rezoningProbability * 100).toFixed(0) || "N/A"}%
                   </div>
                 </div>
                 <div>

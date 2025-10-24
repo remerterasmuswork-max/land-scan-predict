@@ -11,3 +11,9 @@ verify_jwt = false
 
 [functions.top-parcels]
 verify_jwt = false
+
+[functions.ingest-county]
+verify_jwt = false
+
+[functions.score-county]
+verify_jwt = false
