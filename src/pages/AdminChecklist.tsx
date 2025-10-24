@@ -68,6 +68,138 @@ export default function AdminChecklist() {
   const { toast } = useToast();
   const [checks, setChecks] = useState<Record<string, CountyChecks>>({});
   const [isRunning, setIsRunning] = useState(false);
+  const [diagnostics, setDiagnostics] = useState<string>("");
+
+  const runDiagnostics = async () => {
+    let output = "=== RAW DIAGNOSTIC RESULTS ===\n\n";
+
+    // Query 1: Wake parcels geometry
+    try {
+      const { data: q1, error } = await supabase
+        .from("parcels")
+        .select("*", { count: "exact", head: true })
+        .eq("county", "wake" as any);
+      
+      const { data: q1geom, error: geomError } = await supabase
+        .from("parcels")
+        .select("*", { count: "exact", head: true })
+        .eq("county", "wake" as any)
+        .not("geometry", "is", null);
+
+      const pctGeom = q1 && q1geom ? ((q1geom as any) / (q1 as any) * 100).toFixed(2) : "0.00";
+      
+      const result = { count: (q1 as any) || 0, count_geom: (q1geom as any) || 0, pct_geom: pctGeom };
+      output += "Q1: Wake parcels geometry\n";
+      output += JSON.stringify(result, null, 2) + "\n";
+      if (!q1 || (q1 as any) === 0) output += "FAIL: No Wake parcels\n";
+      console.log("Q1:", result);
+    } catch (e: any) {
+      output += `FAIL: Q1 - ${e.message}\n`;
+      console.error("Q1 FAIL:", e);
+    }
+
+    // Query 2: YoY rows  
+    try {
+      const { count: q2 } = await supabase
+        .from("parcel_yoy")
+        .select("*", { count: "exact", head: true })
+        .not("land_val_yoy", "is", null);
+      
+      output += "\nQ2: YoY rows\n";
+      output += JSON.stringify({ yoy_rows: q2 }, null, 2) + "\n";
+      if (!q2 || q2 === 0) output += "FAIL: No YoY data\n";
+      console.log("Q2:", { yoy_rows: q2 });
+    } catch (e: any) {
+      output += `FAIL: Q2 - ${e.message}\n`;
+      console.error("Q2 FAIL:", e);
+    }
+
+    // Query 3: Top YoY gainers
+    try {
+      const { data: q3 } = await supabase
+        .from("parcel_yoy")
+        .select(`
+          land_val_yoy,
+          use_change_flag,
+          parcels!inner(pin, county)
+        `)
+        .eq("parcels.county", "wake" as any)
+        .order("land_val_yoy", { ascending: false })
+        .limit(5);
+      
+      output += "\nQ3: Top 5 YoY gainers (Wake)\n";
+      output += JSON.stringify(q3, null, 2) + "\n";
+      if (!q3 || q3.length === 0) output += "FAIL: No YoY gainers\n";
+      console.log("Q3:", q3);
+    } catch (e: any) {
+      output += `FAIL: Q3 - ${e.message}\n`;
+      console.error("Q3 FAIL:", e);
+    }
+
+    // Query 4: Wake scored count
+    try {
+      const { count: q4 } = await supabase
+        .from("parcel_scores")
+        .select("*, parcels!inner(county)", { count: "exact", head: true })
+        .eq("parcels.county", "wake" as any);
+      
+      output += "\nQ4: Wake scored parcels count\n";
+      output += JSON.stringify({ count: q4 }, null, 2) + "\n";
+      if (!q4 || q4 < 10000) output += "FAIL: <10k scored parcels\n";
+      console.log("Q4:", { count: q4 });
+    } catch (e: any) {
+      output += `FAIL: Q4 - ${e.message}\n`;
+      console.error("Q4 FAIL:", e);
+    }
+
+    // Query 5: Top scored parcels
+    try {
+      const { data: q5 } = await supabase
+        .from("parcel_scores")
+        .select(`
+          rezoning_probability,
+          investment_score,
+          parcels!inner(pin, county)
+        `)
+        .eq("parcels.county", "wake" as any)
+        .order("investment_score", { ascending: false })
+        .limit(5);
+      
+      output += "\nQ5: Top 5 scored parcels (Wake)\n";
+      output += JSON.stringify(q5, null, 2) + "\n";
+      if (!q5 || q5.length === 0) output += "FAIL: No scored parcels\n";
+      console.log("Q5:", q5);
+    } catch (e: any) {
+      output += `FAIL: Q5 - ${e.message}\n`;
+      console.error("Q5 FAIL:", e);
+    }
+
+    // Query 6: Test tile endpoint
+    try {
+      const tileUrl = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/vector-tiles/14/9234/12030.mvt`;
+      const response = await fetch(tileUrl, {
+        headers: {
+          Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY}`,
+        },
+      });
+      const blob = await response.blob();
+      output += "\nQ6: Tile endpoint test\n";
+      output += `HTTP ${response.status}, size=${blob.size} bytes\n`;
+      if (response.ok && blob.size > 0) {
+        output += "PASS: Tile endpoint returns non-empty binary\n";
+      } else {
+        output += "FAIL: Tile endpoint returned empty or error\n";
+      }
+      console.log("Q6: Tile test", { status: response.status, size: blob.size });
+    } catch (e: any) {
+      output += `FAIL: Q6 - ${e.message}\n`;
+      console.error("Q6 FAIL:", e);
+    }
+
+    output += "\n=== END DIAGNOSTICS ===";
+    setDiagnostics(output);
+    console.log(output);
+  };
 
   const runChecks = async (county: string) => {
     const countyChecks: CountyChecks = {
@@ -336,6 +468,20 @@ export default function AdminChecklist() {
           Data pipeline validation — Wake and Mecklenburg counties
         </p>
       </div>
+
+      <Card className="p-6">
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="text-xl font-semibold">Raw Diagnostics</h2>
+          <Button onClick={runDiagnostics} disabled={isRunning}>
+            Run SQL Diagnostics
+          </Button>
+        </div>
+        {diagnostics && (
+          <pre className="bg-black text-green-400 p-4 rounded text-xs overflow-auto max-h-96 font-mono">
+            {diagnostics}
+          </pre>
+        )}
+      </Card>
 
       {Object.entries(FIELD_MAPS).map(([county, config]) => (
         <Card key={county} className="p-6 space-y-4">
