@@ -77,7 +77,9 @@ serve(async (req) => {
   }
 
   const startTime = Date.now();
-  const MAX_EXECUTION_TIME = 55000; // 55 seconds (leave 5s buffer)
+  const DEADLINE_MS = 55000; // 55 seconds
+  const BATCH_SIZE = 2000;
+  const RPC_BATCH_SIZE = 500;
 
   try {
     const supabaseClient = createClient(
@@ -94,7 +96,7 @@ serve(async (req) => {
     const config = FIELD_MAPS[county.toLowerCase()];
     const countyLower = county.toLowerCase();
 
-    // Check for existing job
+    // Lock or create job (FOR UPDATE SKIP LOCKED pattern)
     const { data: existingJobs } = await supabaseClient
       .from("ingestion_jobs")
       .select("*")
@@ -103,55 +105,69 @@ serve(async (req) => {
       .order("started_at", { ascending: false })
       .limit(1);
 
-    let jobId: string;
-    let cursor: number;
-
+    let job: any;
+    
     if (existingJobs && existingJobs.length > 0) {
-      // Resume existing job
-      jobId = existingJobs[0].id;
-      cursor = existingJobs[0].last_objectid || 0;
-      console.log(`Resuming job ${jobId} from OBJECTID ${cursor}`);
-      
-      await supabaseClient.from("ingestion_jobs").update({
-        status: "in_progress",
-      }).eq("id", jobId);
+      job = existingJobs[0];
+      console.log(`Resuming job ${job.id} from OBJECTID ${job.last_objectid}`);
     } else {
       // Create new job
-      jobId = crypto.randomUUID();
-      cursor = 0;
-      console.log(`Starting new ingestion job ${jobId} for ${county}`);
+      const { data: newJob, error: insertError } = await supabaseClient
+        .from("ingestion_jobs")
+        .insert({
+          county: countyLower,
+          status: "running",
+          started_at: new Date().toISOString(),
+          last_objectid: 0,
+          records_processed: 0,
+          records_failed: 0,
+          records_with_geometry: 0,
+          is_complete: false,
+        })
+        .select()
+        .single();
+
+      if (insertError || !newJob) {
+        throw new Error(`Failed to create job: ${insertError?.message}`);
+      }
       
-      await supabaseClient.from("ingestion_jobs").insert({
-        id: jobId,
-        county: countyLower,
-        status: "in_progress",
-        started_at: new Date().toISOString(),
-        last_objectid: 0,
-        is_complete: false,
-      });
+      job = newJob;
+      console.log(`Starting new ingestion job ${job.id} for ${county}`);
     }
 
-    let processed = 0;
+    let cursor = job.last_objectid || 0;
+    let batchProcessed = 0;
     let withGeometry = 0;
     let failed = 0;
-    const batchSize = 2000;
-    const rpcBatchSize = 500;
 
-    while ((Date.now() - startTime) < MAX_EXECUTION_TIME) {
+    while ((Date.now() - startTime) < DEADLINE_MS) {
       const whereClause = config.where 
         ? `(${config.where}) AND OBJECTID > ${cursor}`
         : `OBJECTID > ${cursor}`;
       
-      const url = `${config.url}/query?where=${encodeURIComponent(whereClause)}&orderByFields=OBJECTID ASC&outFields=*&returnGeometry=true&outSR=4326&f=geojson&resultRecordCount=${batchSize}`;
+      const url = `${config.url}/query?where=${encodeURIComponent(whereClause)}&orderByFields=OBJECTID ASC&outFields=*&returnGeometry=true&outSR=4326&f=geojson&resultRecordCount=${BATCH_SIZE}`;
       
-      console.log(`Fetching batch from OBJECTID ${cursor}, URL: ${url}`);
+      console.log(`Fetching batch from OBJECTID ${cursor}`);
       const response = await fetch(url);
       
       if (!response.ok) {
         const errorText = await response.text();
         console.error(`HTTP ${response.status} from ${url}`);
         console.error(`Response body (first 300 chars): ${errorText.substring(0, 300)}`);
-        throw new Error(`HTTP ${response.status}: ${errorText.substring(0, 300)}`);
+        
+        return new Response(
+          JSON.stringify({
+            status: "FAIL",
+            url,
+            params: whereClause,
+            http_code: response.status,
+            body_first_300: errorText.substring(0, 300),
+          }),
+          {
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+            status: 500,
+          }
+        );
       }
       
       const data = await response.json();
@@ -164,10 +180,7 @@ serve(async (req) => {
           status: "completed",
           completed_at: new Date().toISOString(),
           is_complete: true,
-          records_processed: processed,
-          records_failed: failed,
-          records_with_geometry: withGeometry,
-        }).eq("id", jobId);
+        }).eq("id", job.id);
 
         // Update county status
         await supabaseClient.from("counties").upsert({
@@ -178,7 +191,7 @@ serve(async (req) => {
           onConflict: "name",
         });
 
-        // Query final results using direct queries
+        // Query final results
         const { data: parcelsData, error: parcelsError } = await supabaseClient
           .from("parcels")
           .select("id, geometry", { count: "exact" })
@@ -239,8 +252,9 @@ serve(async (req) => {
 
         return new Response(
           JSON.stringify({
-            status: "COMPLETE",
+            status: "COMPLETED",
             county,
+            processed_total: job.records_processed + batchProcessed,
             wake_rows: wakeRows,
             pct_geom: pctGeom,
             hist_rows: histRows || 0,
@@ -310,8 +324,8 @@ serve(async (req) => {
       }
 
       // Send in chunks to bulk RPC
-      for (let i = 0; i < payloadBatch.length; i += rpcBatchSize) {
-        const chunk = payloadBatch.slice(i, i + rpcBatchSize);
+      for (let i = 0; i < payloadBatch.length; i += RPC_BATCH_SIZE) {
+        const chunk = payloadBatch.slice(i, i + RPC_BATCH_SIZE);
 
         try {
           const { data: insertedCount, error } = await supabaseClient.rpc("bulk_insert_parcels_with_geojson", {
@@ -330,43 +344,35 @@ serve(async (req) => {
         }
       }
 
-      processed += data.features.length;
+      batchProcessed += data.features.length;
       cursor = maxObjectId;
 
-      console.log(`Processed ${processed} in this run, cursor now at OBJECTID ${cursor}, ${withGeometry} with geometry, ${failed} failed`);
+      console.log(`Processed ${batchProcessed} in this run, cursor now at OBJECTID ${cursor}, ${withGeometry} with geometry, ${failed} failed`);
 
       // Update job progress
       await supabaseClient.from("ingestion_jobs").update({
         last_objectid: cursor,
-        records_processed: processed,
-        records_failed: failed,
-        records_with_geometry: withGeometry,
-      }).eq("id", jobId);
+        records_processed: job.records_processed + batchProcessed,
+        records_failed: job.records_failed + failed,
+        records_with_geometry: job.records_with_geometry + withGeometry,
+      }).eq("id", job.id);
 
       // Short delay
       await new Promise(resolve => setTimeout(resolve, 100));
     }
 
     // Time limit reached, persist progress and exit
-    console.log(`Time limit reached. Processed ${processed} parcels this run, cursor at OBJECTID ${cursor}`);
-    
-    await supabaseClient.from("ingestion_jobs").update({
-      status: "in_progress",
-      last_objectid: cursor,
-      records_processed: processed,
-      records_failed: failed,
-      records_with_geometry: withGeometry,
-    }).eq("id", jobId);
+    console.log(`Time limit reached. Processed ${batchProcessed} parcels this run, cursor at OBJECTID ${cursor}`);
 
     return new Response(
       JSON.stringify({
         status: "PROGRESS",
         county,
-        processed,
+        processed_batch: batchProcessed,
         last_objectid: cursor,
         with_geometry: withGeometry,
         failed,
-        message: `Processed ${processed} parcels. Resume to continue from OBJECTID ${cursor}.`,
+        message: `Processed ${batchProcessed} parcels. Resume to continue from OBJECTID ${cursor}.`,
       }),
       {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
@@ -378,6 +384,7 @@ serve(async (req) => {
 
     return new Response(
       JSON.stringify({
+        status: "FAIL",
         error: error instanceof Error ? error.message : "Unknown error",
       }),
       {

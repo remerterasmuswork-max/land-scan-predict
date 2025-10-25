@@ -69,6 +69,8 @@ export default function AdminChecklist() {
   const [checks, setChecks] = useState<Record<string, CountyChecks>>({});
   const [isRunning, setIsRunning] = useState(false);
   const [diagnostics, setDiagnostics] = useState<string>("");
+  const [autoResumeRunning, setAutoResumeRunning] = useState(false);
+  const [ingestProgress, setIngestProgress] = useState<string>("");
 
   const runDiagnostics = async () => {
     let output = "=== RAW DIAGNOSTIC RESULTS ===\n\n";
@@ -419,6 +421,54 @@ export default function AdminChecklist() {
     setChecks((prev) => ({ ...prev, [county]: countyChecks }));
   };
 
+  const runUntilComplete = async (county: string) => {
+    setAutoResumeRunning(true);
+    setIngestProgress("");
+    let iteration = 0;
+    
+    try {
+      while (true) {
+        iteration++;
+        setIngestProgress(`Running iteration ${iteration}...`);
+        
+        const { data, error } = await supabase.functions.invoke("ingest-county", { 
+          body: { county } 
+        });
+        
+        if (error) {
+          setIngestProgress(`FAIL: ${error.message}`);
+          toast({ title: "Ingestion failed", description: error.message, variant: "destructive" });
+          break;
+        }
+        
+        if (data?.status === "COMPLETED") {
+          setIngestProgress(`COMPLETED after ${iteration} iterations\n\nResults:\nwake_rows: ${data.wake_rows}\npct_geom: ${data.pct_geom}%\nhist_rows: ${data.hist_rows}\n\nSample:\n${JSON.stringify(data.sample_rows, null, 2)}`);
+          toast({ title: "Ingestion complete!", variant: "default" });
+          break;
+        }
+        
+        if (data?.status === "FAIL") {
+          setIngestProgress(`FAIL: ${data.reason || data.error}\n${JSON.stringify(data, null, 2)}`);
+          toast({ title: "Acceptance criteria not met", description: data.reason, variant: "destructive" });
+          break;
+        }
+        
+        if (data?.status === "PROGRESS") {
+          setIngestProgress(`Iteration ${iteration}: Processed ${data.processed_batch} parcels (cursor: ${data.last_objectid})`);
+          await new Promise(resolve => setTimeout(resolve, 250));
+        } else {
+          setIngestProgress(`Unexpected status: ${JSON.stringify(data, null, 2)}`);
+          break;
+        }
+      }
+    } catch (e: any) {
+      setIngestProgress(`ERROR: ${e.message}`);
+      toast({ title: "Error during auto-resume", description: e.message, variant: "destructive" });
+    }
+    
+    setAutoResumeRunning(false);
+  };
+
   const runWorkflow = async (county: string) => {
     setIsRunning(true);
     try {
@@ -488,14 +538,29 @@ export default function AdminChecklist() {
           <div className="flex items-center justify-between">
             <h2 className="text-2xl font-semibold capitalize">{county} County</h2>
             <div className="space-x-2">
-              <Button onClick={() => runChecks(county)} disabled={isRunning}>
+              <Button onClick={() => runChecks(county)} disabled={isRunning || autoResumeRunning}>
                 Run Checks
               </Button>
-              <Button onClick={() => runWorkflow(county)} disabled={isRunning} variant="secondary">
+              <Button onClick={() => runWorkflow(county)} disabled={isRunning || autoResumeRunning} variant="secondary">
                 Run Full Workflow
               </Button>
+              {county === "wake" && (
+                <Button 
+                  onClick={() => runUntilComplete(county)} 
+                  disabled={isRunning || autoResumeRunning}
+                  variant="default"
+                >
+                  {autoResumeRunning ? "Running..." : "Run Until Complete (Wake)"}
+                </Button>
+              )}
             </div>
           </div>
+          
+          {county === "wake" && ingestProgress && (
+            <div className="bg-muted p-4 rounded">
+              <pre className="text-xs font-mono whitespace-pre-wrap">{ingestProgress}</pre>
+            </div>
+          )}
 
           {/* 1. Data Endpoints */}
           <div className="space-y-2">
