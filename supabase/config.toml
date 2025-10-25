@@ -21,6 +21,9 @@ verify_jwt = false
 [functions.refresh-views]
 verify_jwt = false
 
+[functions.run-until-complete]
+verify_jwt = false
+
 [functions.score-county]
 verify_jwt = false
 
