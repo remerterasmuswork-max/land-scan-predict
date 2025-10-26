@@ -323,6 +323,7 @@ export type Database = {
           owner_name: string | null
           owner_type: Database["public"]["Enums"]["owner_type"] | null
           pin: string
+          raw_attrs: Json | null
           sale_date: string | null
           total_value: number | null
           total_value_assd: number | null
@@ -357,6 +358,7 @@ export type Database = {
           owner_name?: string | null
           owner_type?: Database["public"]["Enums"]["owner_type"] | null
           pin: string
+          raw_attrs?: Json | null
           sale_date?: string | null
           total_value?: number | null
           total_value_assd?: number | null
@@ -393,6 +395,7 @@ export type Database = {
           owner_name?: string | null
           owner_type?: Database["public"]["Enums"]["owner_type"] | null
           pin?: string
+          raw_attrs?: Json | null
           sale_date?: string | null
           total_value?: number | null
           total_value_assd?: number | null
@@ -965,23 +968,25 @@ export type Database = {
           p_calc_area_acres: number
           p_city: string
           p_county: Database["public"]["Enums"]["county_name"]
-          p_deed_date: string
+          p_deed_any: string
           p_geom_geojson: Json
           p_land_code: string
           p_land_val: number
           p_owner_mailing_1: string
           p_owner_name: string
           p_pin: string
-          p_sale_date: string
+          p_raw_attrs: Json
+          p_sale_any: string
           p_total_value_assd: number
           p_totsalprice: number
           p_type_and_use_code: number
           p_type_use_decode: string
-          p_zip: string
+          p_zip_any: string
         }
         Returns: string
       }
       longtransactionsenabled: { Args: never; Returns: boolean }
+      parse_flex_date: { Args: { p_text: string }; Returns: string }
       populate_geometry_columns:
         | { Args: { use_typmod?: boolean }; Returns: string }
         | { Args: { tbl_oid: unknown; use_typmod?: boolean }; Returns: number }
