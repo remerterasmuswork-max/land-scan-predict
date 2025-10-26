@@ -38,13 +38,13 @@ const FIELD_MAPS: Record<string, any> = {
     total_value_assd: "parval",
     type_use_decode: "parusedesc",
     type_and_use_code: null,
-    deed_date: "sourcedate",
-    sale_date: "saledate",
-    totsalprice: "price",
+    deed_date: ["sourcedate"],
+    sale_date: ["saledate"],
+    totsalprice: ["parval"],
     owner_name: "ownname",
-    owner_mailing_1: "addr1",
+    owner_mailing_1: ["mailadd"],
     city: "scity",
-    zip_code: "zip",
+    zip_code: ["szip", "mzip"],
     land_code: null,
     billing_class_decode: null,
     acreage: "gisacres",
@@ -299,7 +299,10 @@ serve(async (req) => {
         }
 
         // Skip if missing PIN
-        if (!attrs[config.pin]) {
+        const pinField = Array.isArray(config.pin) ? config.pin.find((f: string) => attrs[f]) : config.pin;
+        const pinValue = pinField ? attrs[pinField] : null;
+        
+        if (!pinValue) {
           console.error("Missing PIN field:", attrs);
           failed++;
           continue;
@@ -307,33 +310,51 @@ serve(async (req) => {
 
         // Only accept Polygon/MultiPolygon (no Points)
         if (!geom || !["Polygon", "MultiPolygon"].includes(geom.type)) {
-          console.error(`Skipping non-polygon geometry for PIN ${attrs[config.pin]}: ${geom?.type || 'null'}`);
+          console.error(`Skipping non-polygon geometry for PIN ${pinValue}: ${geom?.type || 'null'}`);
           failed++;
           continue;
         }
 
         withGeometry++;
 
+        // Helper to get first available field value
+        const getField = (fieldConfig: any) => {
+          if (!fieldConfig) return null;
+          if (Array.isArray(fieldConfig)) {
+            for (const f of fieldConfig) {
+              if (attrs[f as string] != null && attrs[f as string] !== '') return attrs[f as string];
+            }
+            return null;
+          }
+          return attrs[fieldConfig] || null;
+        };
+
+        // Get raw date strings (don't parse here - let RPC handle it)
+        const rawDeedDate = getField(config.deed_date);
+        const rawSaleDate = getField(config.sale_date);
+        const rawZip = getField(config.zip_code);
+
         const parcelPayload: any = {
-          pin: attrs[config.pin],
+          pin: pinValue,
           county: countyLower,
           geometry: geom,
-          address: attrs[config.address] || null,
-          city: attrs[config.city] || null,
-          zip: attrs[config.zip_code] || null,
-          calc_area_acres: null,
-          land_val: attrs[config.land_val] || null,
-          bldg_val: attrs[config.bldg_val] || null,
-          total_value_assd: attrs[config.total_value_assd] || null,
-          type_and_use_code: attrs[config.type_and_use_code] || null,
-          type_use_decode: attrs[config.type_use_decode] || null,
-          land_code: attrs[config.land_code] || null,
-          billing_class_decode: attrs[config.billing_class_decode] || null,
-          deed_date: attrs[config.deed_date] ? new Date(attrs[config.deed_date]).toISOString().split('T')[0] : null,
-          sale_date: attrs[config.sale_date] ? new Date(attrs[config.sale_date]).toISOString().split('T')[0] : null,
-          totsalprice: attrs[config.totsalprice] || null,
-          owner_name: attrs[config.owner_name] || null,
-          owner_mailing_1: attrs[config.owner_mailing_1] || null,
+          address: getField(config.address),
+          city: getField(config.city),
+          zip: rawZip,
+          calc_area_acres: getField(config.acreage),
+          land_val: getField(config.land_val),
+          bldg_val: getField(config.bldg_val),
+          total_value_assd: getField(config.total_value_assd),
+          type_and_use_code: getField(config.type_and_use_code),
+          type_use_decode: getField(config.type_use_decode),
+          land_code: getField(config.land_code),
+          billing_class_decode: getField(config.billing_class_decode),
+          deed_date: rawDeedDate ? String(rawDeedDate) : null,
+          sale_date: rawSaleDate ? String(rawSaleDate) : null,
+          totsalprice: getField(config.totsalprice),
+          owner_name: getField(config.owner_name),
+          owner_mailing_1: getField(config.owner_mailing_1),
+          raw_attrs: attrs,
         };
 
         payloadBatch.push(parcelPayload);
