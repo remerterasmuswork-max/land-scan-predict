@@ -3,6 +3,9 @@ project_id = "ofolrzxsowtktgaszwst"
 [functions.backfill-history]
 verify_jwt = false
 
+[functions.backfill-mecklenburg]
+verify_jwt = false
+
 [functions.county-status]
 verify_jwt = false
 

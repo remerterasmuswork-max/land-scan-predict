@@ -815,6 +815,9 @@ export type Database = {
             }
             Returns: string
           }
+      backfill_mecklenburg_deed_dates: { Args: never; Returns: number }
+      backfill_mecklenburg_sale_dates: { Args: never; Returns: number }
+      backfill_mecklenburg_zips: { Args: never; Returns: number }
       bulk_insert_parcels_with_geojson: {
         Args: { p_payload: Json }
         Returns: number
