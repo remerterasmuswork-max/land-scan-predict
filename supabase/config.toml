@@ -16,10 +16,10 @@ verify_jwt = false
 verify_jwt = false
 
 [functions.parcel-detail]
-verify_jwt = false
+verify_jwt = true
 
 [functions.parcel-search]
-verify_jwt = false
+verify_jwt = true
 
 [functions.refresh-views]
 verify_jwt = false
@@ -31,7 +31,7 @@ verify_jwt = false
 verify_jwt = false
 
 [functions.top-parcels]
-verify_jwt = false
+verify_jwt = true
 
 [functions.vector-tiles]
-verify_jwt = false
+verify_jwt = true

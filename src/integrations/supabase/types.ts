@@ -436,6 +436,27 @@ export type Database = {
         }
         Relationships: []
       }
+      user_roles: {
+        Row: {
+          created_at: string | null
+          id: string
+          role: Database["public"]["Enums"]["app_role"]
+          user_id: string
+        }
+        Insert: {
+          created_at?: string | null
+          id?: string
+          role: Database["public"]["Enums"]["app_role"]
+          user_id: string
+        }
+        Update: {
+          created_at?: string | null
+          id?: string
+          role?: Database["public"]["Enums"]["app_role"]
+          user_id?: string
+        }
+        Relationships: []
+      }
       user_saved_parcels: {
         Row: {
           created_at: string | null
@@ -955,7 +976,10 @@ export type Database = {
       geomfromewkt: { Args: { "": string }; Returns: unknown }
       get_tile_data: {
         Args: {
-          where_clause?: string
+          county_filter?: string
+          inside_usa_filter?: boolean
+          min_acres_filter?: number
+          min_prob_filter?: number
           x_param: number
           y_param: number
           z_param: number
@@ -963,6 +987,13 @@ export type Database = {
         Returns: string
       }
       gettransactionid: { Args: never; Returns: unknown }
+      has_role: {
+        Args: {
+          _role: Database["public"]["Enums"]["app_role"]
+          _user_id: string
+        }
+        Returns: boolean
+      }
       insert_parcel_with_geojson: {
         Args: {
           p_address: string
@@ -1625,6 +1656,7 @@ export type Database = {
       }
     }
     Enums: {
+      app_role: "admin" | "moderator" | "user"
       county_name: "wake" | "mecklenburg" | "durham" | "orange" | "chatham"
       ingestion_status: "pending" | "running" | "completed" | "failed"
       owner_type:
@@ -1776,6 +1808,7 @@ export type CompositeTypes<
 export const Constants = {
   public: {
     Enums: {
+      app_role: ["admin", "moderator", "user"],
       county_name: ["wake", "mecklenburg", "durham", "orange", "chatham"],
       ingestion_status: ["pending", "running", "completed", "failed"],
       owner_type: [

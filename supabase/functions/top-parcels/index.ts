@@ -12,10 +12,26 @@ serve(async (req) => {
   }
 
   try {
+    // Authentication enforced by verify_jwt = true in config.toml
     const supabaseClient = createClient(
       Deno.env.get("SUPABASE_URL") ?? "",
-      Deno.env.get("SUPABASE_PUBLISHABLE_KEY") ?? ""
+      Deno.env.get("SUPABASE_ANON_KEY") ?? "",
+      {
+        global: {
+          headers: { Authorization: req.headers.get("Authorization")! },
+        },
+      }
     );
+
+    // Verify the user is authenticated
+    const { data: { user }, error: authError } = await supabaseClient.auth.getUser();
+    
+    if (authError || !user) {
+      return new Response(
+        JSON.stringify({ error: "Unauthorized" }),
+        { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
 
     const { limit = 20, county } = await req.json();
 
@@ -89,9 +105,7 @@ serve(async (req) => {
   } catch (error) {
     console.error("Error in top-parcels:", error);
     return new Response(
-      JSON.stringify({
-        error: error instanceof Error ? error.message : "Unknown error",
-      }),
+      JSON.stringify({ error: "An error occurred processing your request" }),
       {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
         status: 500,

@@ -36,18 +36,15 @@ serve(async (req) => {
     const minProb = parseFloat(url.searchParams.get("minProb") || "0");
     const insideUSA = url.searchParams.get("insideUSA") === "true";
 
-    // Build MVT query with filters
-    let whereClause = "p.geometry IS NOT NULL";
-    if (county) whereClause += ` AND p.county = '${county.toLowerCase()}'`;
-    if (minAcres > 0) whereClause += ` AND p.acreage >= ${minAcres}`;
-    if (minProb > 0) whereClause += ` AND ps.rezoning_probability >= ${minProb}`;
-    if (insideUSA) whereClause += ` AND pi.inside_urban_service_area = true`;
-
+    // Use new secure get_tile_data function with discrete parameters
     const { data, error } = await supabaseClient.rpc("get_tile_data", {
       z_param: z,
       x_param: x,
       y_param: y,
-      where_clause: whereClause,
+      county_filter: county,
+      min_acres_filter: minAcres,
+      min_prob_filter: minProb,
+      inside_usa_filter: insideUSA,
     });
 
     if (error) {
