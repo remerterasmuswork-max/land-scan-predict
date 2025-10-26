@@ -37,10 +37,16 @@ const FIELD_MAPS: Record<string, any> = {
     bldg_val: "improvval",
     total_value_assd: "parval",
     type_use_decode: "parusedesc",
+    type_and_use_code: null,
     deed_date: "sourcedate",
     sale_date: "saledate",
+    totsalprice: "price",
     owner_name: "ownname",
+    owner_mailing_1: "addr1",
     city: "scity",
+    zip_code: "zip",
+    land_code: null,
+    billing_class_decode: null,
     acreage: "gisacres",
   },
   durham: {
@@ -198,9 +204,9 @@ serve(async (req) => {
           .select("id, geometry", { count: "exact" })
           .eq("county", countyLower);
 
-        const wakeRows = parcelsData?.length || 0;
+        const totalRows = parcelsData?.length || 0;
         const withGeomCount = parcelsData?.filter(p => p.geometry !== null).length || 0;
-        const pctGeom = wakeRows > 0 ? Math.round((withGeomCount / wakeRows) * 100 * 100) / 100 : 0;
+        const pctGeom = totalRows > 0 ? Math.round((withGeomCount / totalRows) * 100 * 100) / 100 : 0;
 
         if (parcelsError) {
           console.error("Error querying parcels:", parcelsError);
@@ -218,7 +224,7 @@ serve(async (req) => {
 
         const { data: sampleData, error: sampleError } = await supabaseClient
           .from("parcels")
-          .select("pin, land_val, type_and_use_code, deed_date")
+          .select("pin, land_val, type_use_decode, deed_date, geometry")
           .eq("county", countyLower)
           .not("geometry", "is", null)
           .limit(3);
@@ -228,21 +234,30 @@ serve(async (req) => {
         }
 
         console.log("=== FINAL RESULTS ===");
-        console.log(`wake_rows: ${wakeRows}`);
+        console.log(`${countyLower}_rows: ${totalRows}`);
         console.log(`pct_geom: ${pctGeom}`);
         console.log(`hist_rows: ${histRows || 0}`);
         console.log("Sample rows:", JSON.stringify(sampleData, null, 2));
 
+        // County-specific thresholds
+        const minRows = countyLower === 'wake' ? 100000 : 50000;
+        const minHistRatio = 0.95;
+        
         // Hard acceptance check
-        if (wakeRows < 100000 || pctGeom < 99.0 || (histRows || 0) < 100000) {
+        if (totalRows < minRows || pctGeom < 99.0 || (histRows || 0) < totalRows * minHistRatio) {
           return new Response(
             JSON.stringify({
               status: "FAIL",
               reason: "Acceptance criteria not met",
-              wake_rows: wakeRows,
+              county: countyLower,
+              total_rows: totalRows,
               pct_geom: pctGeom,
               hist_rows: histRows || 0,
-              requirements: { wake_rows: ">=100000", pct_geom: ">=99.0", hist_rows: ">=100000" },
+              requirements: { 
+                min_rows: `>=${minRows}`, 
+                pct_geom: ">=99.0", 
+                hist_rows: `>=${Math.floor(totalRows * minHistRatio)}` 
+              },
             }),
             {
               headers: { ...corsHeaders, "Content-Type": "application/json" },
@@ -256,7 +271,7 @@ serve(async (req) => {
             status: "COMPLETED",
             county,
             processed_total: job.records_processed + batchProcessed,
-            wake_rows: wakeRows,
+            total_rows: totalRows,
             pct_geom: pctGeom,
             hist_rows: histRows || 0,
             sample_rows: sampleData,
@@ -290,9 +305,9 @@ serve(async (req) => {
           continue;
         }
 
-        // Skip if no geometry or invalid type
-        if (!geom || !["Point", "Polygon", "MultiPolygon"].includes(geom.type)) {
-          console.error(`Invalid geometry type for PIN ${attrs[config.pin]}: ${geom?.type || 'null'}`);
+        // Only accept Polygon/MultiPolygon (no Points)
+        if (!geom || !["Polygon", "MultiPolygon"].includes(geom.type)) {
+          console.error(`Skipping non-polygon geometry for PIN ${attrs[config.pin]}: ${geom?.type || 'null'}`);
           failed++;
           continue;
         }
