@@ -29,7 +29,8 @@ const FIELD_MAPS: Record<string, any> = {
     acreage: "REID_ACREAG",
   },
   mecklenburg: {
-    url: "https://services.arcgis.com/v400IkDOw1ad7Yad/ArcGIS/rest/services/NC1Map_Parcels/FeatureServer/0",
+    url: "https://services.nconemap.gov/secure/rest/services/NC1Map_Parcels/FeatureServer/0",
+    where: "COUNTY = 'MECKLENBURG'",
     pin: "PIN",
     land_val: "LAND_VALUE",
     total_value_assd: "TOTAL_VALUE",
