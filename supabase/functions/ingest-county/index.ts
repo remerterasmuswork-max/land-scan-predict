@@ -36,7 +36,7 @@ const FIELD_MAPS: Record<string, any> = {
     land_val: "landval",
     bldg_val: "improvval",
     total_value_assd: "parval",
-    type_and_use_code: "parusecode",
+    type_use_decode: "parusedesc",
     deed_date: "sourcedate",
     sale_date: "saledate",
     owner_name: "ownname",
@@ -290,8 +290,8 @@ serve(async (req) => {
           continue;
         }
 
-        // Skip if no geometry
-        if (!geom || (geom.type !== "Polygon" && geom.type !== "MultiPolygon")) {
+        // Skip if no geometry or invalid type
+        if (!geom || !["Point", "Polygon", "MultiPolygon"].includes(geom.type)) {
           console.error(`Invalid geometry type for PIN ${attrs[config.pin]}: ${geom?.type || 'null'}`);
           failed++;
           continue;
